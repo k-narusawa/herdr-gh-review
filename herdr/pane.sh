@@ -1,14 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+# herdr はプラグインコマンドに最小限の PATH しか渡さない。mise で管理しているツールも拾う
+PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
 HERDR="${HERDR_BIN_PATH:-herdr}"
 PLUGIN_ID="k-narusawa.gh-review"
 
 mode="${1:-open}"
 
-context="${HERDR_PLUGIN_CONTEXT_JSON:-{\}}"
-cwd="$(printf '%s' "$context" | jq -r '.focused_pane_cwd // empty')"
+# macOS 標準の bash 3.2 は "${VAR:-{\}}" を {\} に展開してしまうので、既定値は別行で入れる
+context="${HERDR_PLUGIN_CONTEXT_JSON:-}"
+if [ -z "$context" ]; then
+  context='{}'
+fi
+
+# jq が無くても動くこと。cwd が取れなければカレントディレクトリで開く
+cwd=""
+if command -v jq >/dev/null 2>&1; then
+  cwd="$(printf '%s' "$context" | jq -r '.focused_pane_cwd // empty' 2>/dev/null || true)"
+fi
 : "${cwd:=$PWD}"
 
 case "$mode" in

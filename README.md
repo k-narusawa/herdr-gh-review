@@ -7,7 +7,7 @@ diffを読み、行コメントを書き、レビューとして提出すると�
 
 - herdr 0.7.5 以上
 - [gh](https://cli.github.com/) 2.x（`gh auth login` 済みであること）
-- Rust 1.97 以上（ビルドに必要）
+- Rust 1.85 以上（edition 2024）。開発は `mise.toml` で 1.97.1 に固定
 
 ## インストール
 
@@ -38,6 +38,9 @@ bash ./herdr-gh-review/herdr/install.sh
 | `d` | コメントを削除 |
 | `e` | レビュー全体コメントを編集 |
 | `S` | 提出（Comment / Approve / Request changes） |
+| `o` | ブラウザでPRを開く |
+| `r` | 再読み込み |
+| `?` | キー一覧を表示 |
 | `q` | 戻る / 終了 |
 
 書きかけのレビューは自動保存される。提出に成功したときだけ消える。
