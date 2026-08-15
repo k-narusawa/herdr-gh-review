@@ -1,3 +1,4 @@
+mod app;
 mod diff;
 mod gh;
 mod review;
