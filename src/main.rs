@@ -1,5 +1,6 @@
 mod app;
 mod diff;
+mod editor;
 mod gh;
 mod review;
 mod target;
@@ -95,6 +96,11 @@ fn open_pr(
     run_diff_view(terminal, &mut app, &pr)
 }
 
+enum KeyOutcome {
+    Continue,
+    Leave,
+}
+
 fn run_diff_view(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut App,
@@ -109,17 +115,23 @@ fn run_diff_view(
         if key.kind != KeyEventKind::Press {
             continue;
         }
-        if handle_key(app, key) {
-            return Ok(());
+        match handle_key(terminal, app, key)? {
+            KeyOutcome::Leave => return Ok(()),
+            KeyOutcome::Continue => {}
         }
     }
 }
 
-/// 戻り値が true なら画面を抜ける
-fn handle_key(app: &mut App, key: KeyEvent) -> bool {
+fn handle_key(
+    terminal: &mut ratatui::DefaultTerminal,
+    app: &mut App,
+    key: KeyEvent,
+) -> Result<KeyOutcome> {
     let half_page = 15;
+    app.status = None;
+
     match (key.code, key.modifiers) {
-        (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => return true,
+        (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => return Ok(KeyOutcome::Leave),
         (KeyCode::Char('j'), _) | (KeyCode::Down, _) => app.move_cursor(1),
         (KeyCode::Char('k'), _) | (KeyCode::Up, _) => app.move_cursor(-1),
         (KeyCode::Char('d'), KeyModifiers::CONTROL) => app.move_cursor(half_page),
@@ -129,7 +141,70 @@ fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         (KeyCode::Char('}'), _) => app.next_file(),
         (KeyCode::Char('{'), _) => app.prev_file(),
         (KeyCode::Tab, _) => app.toggle_collapse(),
+        (KeyCode::Char('c'), _) => comment_on_cursor(terminal, app)?,
+        (KeyCode::Char('d'), _) => delete_comment_on_cursor(app)?,
+        (KeyCode::Char('e'), _) => edit_review_body(terminal, app)?,
         _ => {}
     }
-    false
+    Ok(KeyOutcome::Continue)
+}
+
+/// 端末を一度畳んでエディタに渡し、戻ってきたら組み立て直す
+fn with_editor<T>(
+    terminal: &mut ratatui::DefaultTerminal,
+    f: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    ratatui::restore();
+    let result = f();
+    *terminal = ratatui::init();
+    terminal.clear()?;
+    result
+}
+
+fn comment_on_cursor(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
+    let Some(target) = app.cursor_target() else {
+        app.status = Some(" この行にはコメントできません ".into());
+        return Ok(());
+    };
+    let initial = app
+        .draft
+        .comment_at(&target)
+        .map(|c| c.body.clone())
+        .unwrap_or_default();
+
+    let Some(body) = with_editor(terminal, || editor::edit_text(&initial))? else {
+        app.status = Some(" コメントは空だったので破棄しました ".into());
+        return Ok(());
+    };
+
+    app.draft.upsert_comment(target, body);
+    review::save(&review::state_dir(), &app.draft)?;
+    app.rebuild_rows();
+    Ok(())
+}
+
+fn delete_comment_on_cursor(app: &mut App) -> Result<()> {
+    let target = match app.rows.get(app.cursor) {
+        Some(app::Row::Comment { path, line, side, .. }) => crate::diff::CommentTarget {
+            path: path.clone(),
+            line: *line,
+            side: *side,
+        },
+        _ => match app.cursor_target() {
+            Some(t) => t,
+            None => return Ok(()),
+        },
+    };
+    app.draft.remove_comment(&target);
+    review::save(&review::state_dir(), &app.draft)?;
+    app.rebuild_rows();
+    Ok(())
+}
+
+fn edit_review_body(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
+    let initial = app.draft.body.clone();
+    let body = with_editor(terminal, || editor::edit_text(&initial))?.unwrap_or_default();
+    app.draft.body = body;
+    review::save(&review::state_dir(), &app.draft)?;
+    Ok(())
 }
