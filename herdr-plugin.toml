@@ -1,0 +1,40 @@
+id = "k-narusawa.gh-review"
+name = "gh-review"
+version = "0.1.0"
+min_herdr_version = "0.7.5"
+platforms = ["macos", "linux"]
+description = "Review GitHub pull requests in a herdr pane."
+
+[[build]]
+command = ["bash", "herdr/install.sh"]
+
+# ペインのcwdはレビュー対象のリポジトリであってプラグインルートではないため、絶対パスで起動する
+[[panes]]
+id = "pane"
+title = "gh-review"
+placement = "tab"
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/herdr-gh-review\""]
+
+[[actions]]
+id = "open"
+title = "gh-review: open PR list"
+contexts = ["pane", "workspace"]
+command = ["bash", "herdr/pane.sh", "open"]
+
+[[actions]]
+id = "review-requested"
+title = "gh-review: PRs awaiting my review"
+contexts = ["pane", "workspace"]
+command = ["bash", "herdr/pane.sh", "review-requested"]
+
+[[actions]]
+id = "open-url"
+title = "gh-review: open PR URL"
+contexts = ["workspace"]
+command = ["bash", "herdr/pane.sh", "open-url"]
+
+[[link_handlers]]
+id = "pr-url"
+title = "Open in gh-review"
+pattern = "^https://github\\.com/[^/]+/[^/]+/pull/[0-9]+"
+action = "open-url"
