@@ -143,20 +143,33 @@ pub fn draft_path(state_dir: &Path, repo: &str, pr_number: u32) -> PathBuf {
 
 pub fn save(state_dir: &Path, draft: &Draft) -> Result<()> {
     let path = draft_path(state_dir, &draft.repo, draft.pr_number);
-    std::fs::create_dir_all(path.parent().expect("draft path has a parent"))
+    let parent = path.parent().expect("draft path has a parent");
+    std::fs::create_dir_all(parent)
         .with_context(|| format!("下書きディレクトリを作れません: {}", path.display()))?;
     let json = serde_json::to_string_pretty(draft)?;
-    std::fs::write(&path, json)
-        .with_context(|| format!("下書きを保存できません: {}", path.display()))
+
+    // 書き込み途中で落ちても、path は完全な旧内容か完全な新内容のどちらかにしかならない
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json)
+        .with_context(|| format!("下書きを書き込めません: {}", tmp.display()))?;
+    std::fs::rename(&tmp, &path)
+        .with_context(|| format!("下書きを確定できません: {}", path.display()))
 }
 
-/// 壊れた下書きは無いものとして扱う。読めないファイルのために起動できない方が損失が大きい
+/// 壊れた下書きは無いものとして扱う。読めないファイルのために起動できない方が損失が大きい。
+/// ただし次の save に上書きさせないよう、退避してから諦める
 pub fn load(state_dir: &Path, repo: &str, pr_number: u32) -> Result<Option<Draft>> {
     let path = draft_path(state_dir, repo, pr_number);
     let Ok(raw) = std::fs::read_to_string(&path) else {
         return Ok(None);
     };
-    Ok(serde_json::from_str(&raw).ok())
+    match serde_json::from_str(&raw) {
+        Ok(draft) => Ok(Some(draft)),
+        Err(_) => {
+            let _ = std::fs::rename(&path, path.with_extension("json.corrupt"));
+            Ok(None)
+        }
+    }
 }
 
 pub fn delete(state_dir: &Path, repo: &str, pr_number: u32) -> Result<()> {
@@ -297,5 +310,32 @@ mod tests {
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, "{ broken").unwrap();
         assert_eq!(load(dir.path(), "k-narusawa/app", 42).unwrap(), None);
+    }
+
+    #[test]
+    fn save_leaves_no_temporary_file_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        save(dir.path(), &draft_with_two_comments()).unwrap();
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path().join("drafts"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "一時ファイルが残っている: {leftovers:?}");
+    }
+
+    #[test]
+    fn corrupt_draft_is_preserved_not_discarded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = draft_path(dir.path(), "k-narusawa/app", 42);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "{ broken but precious").unwrap();
+
+        assert_eq!(load(dir.path(), "k-narusawa/app", 42).unwrap(), None);
+
+        let rescued = path.with_extension("json.corrupt");
+        assert!(rescued.exists(), "壊れた下書きが退避されていない");
+        assert_eq!(std::fs::read_to_string(&rescued).unwrap(), "{ broken but precious");
+        assert!(!path.exists(), "壊れたファイルが元の場所に残っている");
     }
 }
