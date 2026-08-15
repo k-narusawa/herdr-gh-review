@@ -246,4 +246,26 @@ diff --git a/b.rs b/b.rs
         assert_eq!(t.line, 1);
         assert_eq!(t.side, Side::Right);
     }
+
+    #[test]
+    fn empty_diff_survives_every_cursor_operation() {
+        let mut a = App::new(
+            crate::diff::parse(""),
+            crate::review::Draft::new("o/r", 1, "sha"),
+        );
+        assert!(a.rows.is_empty());
+
+        // どれも落ちないことがこのテストの主張
+        a.move_cursor(1);
+        a.move_cursor(-1);
+        a.next_file();
+        a.prev_file();
+        a.toggle_collapse();
+        a.rebuild_rows();
+
+        assert_eq!(a.cursor, 0);
+        assert_eq!(a.cursor_file_idx(), None);
+        assert_eq!(a.cursor_target(), None);
+        assert!(a.cursor_line().is_none());
+    }
 }
