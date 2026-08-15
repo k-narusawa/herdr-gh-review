@@ -283,4 +283,121 @@ index 1111111..2222222 100644
         assert_eq!(d.files[0].additions(), 2);
         assert_eq!(d.files[0].deletions(), 1);
     }
+
+    const MULTI: &str = "\
+diff --git a/src/new.rs b/src/new.rs
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/src/new.rs
+@@ -0,0 +1,2 @@
++fn brand_new() {}
++
+diff --git a/src/gone.rs b/src/gone.rs
+deleted file mode 100644
+index 4444444..0000000
+--- a/src/gone.rs
++++ /dev/null
+@@ -1,2 +0,0 @@
+-fn removed() {}
+-
+diff --git a/old_name.rs b/new_name.rs
+similarity index 100%
+rename from old_name.rs
+rename to new_name.rs
+diff --git a/logo.png b/logo.png
+index 5555555..6666666 100644
+Binary files a/logo.png and b/logo.png differ
+";
+
+    #[test]
+    fn splits_every_file() {
+        let d = parse(MULTI);
+        assert_eq!(d.files.len(), 4);
+    }
+
+    #[test]
+    fn marks_added_file_with_no_old_path() {
+        let f = &parse(MULTI).files[0];
+        assert_eq!(f.old_path, None);
+        assert_eq!(f.new_path.as_deref(), Some("src/new.rs"));
+        assert_eq!(f.display_path(), "src/new.rs");
+        assert_eq!(f.hunks[0].lines[0].new_lineno, Some(1));
+        assert_eq!(f.hunks[0].lines[0].old_lineno, None);
+    }
+
+    #[test]
+    fn marks_deleted_file_with_no_new_path() {
+        let f = &parse(MULTI).files[1];
+        assert_eq!(f.old_path.as_deref(), Some("src/gone.rs"));
+        assert_eq!(f.new_path, None);
+        assert_eq!(f.display_path(), "src/gone.rs");
+        assert_eq!(f.hunks[0].lines[0].old_lineno, Some(1));
+    }
+
+    #[test]
+    fn detects_rename_without_hunks() {
+        let f = &parse(MULTI).files[2];
+        assert_eq!(f.old_path.as_deref(), Some("old_name.rs"));
+        assert_eq!(f.new_path.as_deref(), Some("new_name.rs"));
+        assert!(f.is_rename());
+        assert!(f.hunks.is_empty());
+    }
+
+    #[test]
+    fn detects_binary_file() {
+        let f = &parse(MULTI).files[3];
+        assert!(f.is_binary);
+        assert!(f.hunks.is_empty());
+    }
+
+    const MULTI_HUNK: &str = "\
+diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -1,2 +1,2 @@
+-one
++ONE
+ two
+@@ -50,2 +50,3 @@
+ fifty
++fifty-one
+ fifty-two
+";
+
+    #[test]
+    fn restarts_line_numbers_at_each_hunk() {
+        let f = &parse(MULTI_HUNK).files[0];
+        assert_eq!(f.hunks.len(), 2);
+        assert_eq!(f.hunks[0].lines[0].old_lineno, Some(1));
+        assert_eq!(f.hunks[1].lines[0].new_lineno, Some(50));
+        assert_eq!(f.hunks[1].lines[1].new_lineno, Some(51));
+        assert_eq!(f.hunks[1].lines[2].new_lineno, Some(52));
+    }
+
+    const NO_NEWLINE: &str = "\
+diff --git a/a.txt b/a.txt
+--- a/a.txt
++++ b/a.txt
+@@ -1 +1 @@
+-old
+\\ No newline at end of file
++new
+\\ No newline at end of file
+";
+
+    #[test]
+    fn ignores_no_newline_marker() {
+        let f = &parse(NO_NEWLINE).files[0];
+        assert_eq!(f.hunks[0].lines.len(), 2);
+        assert_eq!(f.hunks[0].lines[0].text, "old");
+        assert_eq!(f.hunks[0].lines[1].text, "new");
+        assert_eq!(f.hunks[0].lines[1].new_lineno, Some(1));
+    }
+
+    #[test]
+    fn parses_hunk_header_without_counts() {
+        let f = &parse(NO_NEWLINE).files[0];
+        assert_eq!(f.hunks[0].lines[0].old_lineno, Some(1));
+    }
 }
