@@ -48,8 +48,6 @@ fn render_body(app: &mut App, frame: &mut Frame, area: Rect) {
     let height = area.height as usize;
     app.scroll = clamp_scroll(app.scroll, app.cursor, height);
 
-    // app.rows の走査と row_to_line の両方が app を借りるため、ここで共有参照に落とす
-    let app: &App = app;
     let lines: Vec<Line> = app
         .rows
         .iter()
