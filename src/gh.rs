@@ -243,19 +243,27 @@ impl Gh {
 /// 環境変数の書き換え（edition 2024 では unsafe）を避けるため、絶対パスを解決して使う
 fn find_gh() -> Option<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    gh_candidates(&path_var, &home)
+        .into_iter()
+        .find(|p| p.is_file())
+}
+
+/// PATH の空要素はカレントディレクトリを意味してしまうので落とす
+fn gh_candidates(path_var: &str, home: &str) -> Vec<PathBuf> {
     let extra = [
         "/opt/homebrew/bin".to_string(),
         "/usr/local/bin".to_string(),
         format!("{home}/.local/bin"),
         format!("{home}/.local/share/mise/shims"),
     ];
-    let path_dirs = std::env::var("PATH").unwrap_or_default();
-    path_dirs
+    path_var
         .split(':')
+        .filter(|d| !d.is_empty())
         .map(str::to_string)
         .chain(extra)
         .map(|d| PathBuf::from(d).join("gh"))
-        .find(|p| p.is_file())
+        .collect()
 }
 
 #[cfg(test)]
@@ -305,6 +313,30 @@ mod tests {
         assert_eq!(d.number, 14148);
         assert_eq!(d.head_sha, "f6260aa5f65b721454cbe36d3d66b9b860c08f9b");
         assert_eq!(d.repo, "cli/cli");
+    }
+
+    #[test]
+    fn gh_candidates_skip_empty_path_entries() {
+        let candidates = gh_candidates("/usr/bin::/bin:", "/home/x");
+        assert!(
+            !candidates.iter().any(|p| p == std::path::Path::new("gh")),
+            "相対パスの gh が候補に混じっている: {candidates:?}"
+        );
+        assert!(candidates.contains(&PathBuf::from("/usr/bin/gh")));
+        assert!(candidates.contains(&PathBuf::from("/bin/gh")));
+    }
+
+    #[test]
+    fn gh_candidates_fall_back_when_path_is_empty() {
+        assert_eq!(
+            gh_candidates("", "/home/x"),
+            vec![
+                PathBuf::from("/opt/homebrew/bin/gh"),
+                PathBuf::from("/usr/local/bin/gh"),
+                PathBuf::from("/home/x/.local/bin/gh"),
+                PathBuf::from("/home/x/.local/share/mise/shims/gh"),
+            ]
+        );
     }
 
     #[test]
