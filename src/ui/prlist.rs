@@ -5,7 +5,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-pub fn render(prs: &[PrSummary], cursor: usize, title: &str, frame: &mut Frame) {
+pub fn render(prs: &[PrSummary], cursor: usize, title: &str, status: Option<&str>, frame: &mut Frame) {
     let areas = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(1),
@@ -19,7 +19,12 @@ pub fn render(prs: &[PrSummary], cursor: usize, title: &str, frame: &mut Frame) 
         areas[0],
     );
 
-    if prs.is_empty() {
+    if let Some(message) = status {
+        frame.render_widget(
+            Paragraph::new(format!("  {message}")).style(Style::default().fg(Color::Red)),
+            areas[1],
+        );
+    } else if prs.is_empty() {
         frame.render_widget(
             Paragraph::new("  該当するPRがありません")
                 .style(Style::default().fg(Color::DarkGray)),

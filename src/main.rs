@@ -43,11 +43,20 @@ fn run_pr_list(
         ("Open pull requests", Gh::list_prs)
     };
 
-    let mut prs = fetch(gh)?;
+    let mut prs = Vec::new();
     let mut cursor = 0usize;
+    let mut status: Option<String> = None;
+
+    match fetch(gh) {
+        Ok(v) => prs = v,
+        Err(e) => {
+            gh::log_error(&e);
+            status = Some(fetch_error_message(&e, review_requested));
+        }
+    }
 
     loop {
-        terminal.draw(|f| ui::prlist::render(&prs, cursor, title, f))?;
+        terminal.draw(|f| ui::prlist::render(&prs, cursor, title, status.as_deref(), f))?;
 
         let Event::Key(key) = event::read()? else {
             continue;
@@ -62,17 +71,38 @@ fn run_pr_list(
             }
             KeyCode::Char('k') | KeyCode::Up => cursor = cursor.saturating_sub(1),
             KeyCode::Char('r') => {
-                prs = fetch(gh)?;
-                cursor = 0;
+                status = None;
+                match fetch(gh) {
+                    Ok(v) => {
+                        prs = v;
+                        cursor = 0;
+                    }
+                    Err(e) => {
+                        gh::log_error(&e);
+                        status = Some(fetch_error_message(&e, review_requested));
+                    }
+                }
             }
             KeyCode::Enter => {
                 if let Some(pr) = prs.get(cursor) {
-                    open_pr(terminal, gh, pr.repo.as_deref(), pr.number)?;
+                    if let Err(e) = open_pr(terminal, gh, pr.repo.as_deref(), pr.number) {
+                        gh::log_error(&e);
+                        status = Some(first_line(&e.to_string()));
+                    }
                 }
             }
             _ => {}
         }
     }
+}
+
+/// カレントディレクトリがGitHubリポジトリでない場合が最も多いので、そのときだけ次の手を添える
+fn fetch_error_message(error: &anyhow::Error, review_requested: bool) -> String {
+    let message = first_line(&error.to_string());
+    if review_requested {
+        return message;
+    }
+    format!("{message}（--review-requested なら任意の場所から使えます）")
 }
 
 fn open_pr(
@@ -116,7 +146,7 @@ fn run_diff_view(
         if key.kind != KeyEventKind::Press {
             continue;
         }
-        match handle_key(terminal, gh, app, key)? {
+        match handle_key(terminal, gh, app, pr, key)? {
             KeyOutcome::Leave => return Ok(()),
             KeyOutcome::Continue => {}
         }
@@ -127,6 +157,7 @@ fn handle_key(
     terminal: &mut ratatui::DefaultTerminal,
     gh: &Gh,
     app: &mut App,
+    pr: &PrDetail,
     key: KeyEvent,
 ) -> Result<KeyOutcome> {
     let half_page = 15;
@@ -147,9 +178,36 @@ fn handle_key(
         (KeyCode::Char('d'), _) => delete_comment_on_cursor(app)?,
         (KeyCode::Char('e'), _) => edit_review_body(terminal, app)?,
         (KeyCode::Char('S'), _) => submit(terminal, app, gh)?,
+        (KeyCode::Char('o'), _) => {
+            if let Err(e) = gh.open_in_browser(&app.draft.repo, app.draft.pr_number) {
+                gh::log_error(&e);
+                app.status = Some(format!(" {} ", first_line(&e.to_string())));
+            }
+        }
+        (KeyCode::Char('r'), _) => reload(app, gh, pr)?,
+        (KeyCode::Char('?'), _) => {
+            terminal.draw(|f| ui::help::render(f))?;
+            let _ = event::read()?;
+        }
         _ => {}
     }
     Ok(KeyOutcome::Continue)
+}
+
+/// 下書きは残したままdiffだけ取り直す。失敗しても今の画面は壊さない
+fn reload(app: &mut App, gh: &Gh, pr: &PrDetail) -> Result<()> {
+    match gh.pr_diff(&pr.repo, pr.number) {
+        Ok(raw) => {
+            app.diff = diff::parse(&raw);
+            app.rebuild_rows();
+            app.status = Some(" 再読み込みしました ".into());
+        }
+        Err(e) => {
+            gh::log_error(&e);
+            app.status = Some(format!(" {} ", first_line(&e.to_string())));
+        }
+    }
+    Ok(())
 }
 
 fn submit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, gh: &Gh) -> Result<()> {
@@ -187,10 +245,13 @@ fn submit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, gh: &Gh) -> Re
                         );
                         app.status = Some(match cleanup {
                             Ok(()) => format!(" {} で提出しました ", event.label()),
-                            Err(_) => format!(
-                                " {} で提出しました（下書きファイルは削除できませんでした） ",
-                                event.label()
-                            ),
+                            Err(e) => {
+                                gh::log_error(&e);
+                                format!(
+                                    " {} で提出しました（下書きファイルは削除できませんでした） ",
+                                    event.label()
+                                )
+                            }
                         });
                         return Ok(());
                     }

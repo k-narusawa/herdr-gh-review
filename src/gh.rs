@@ -239,6 +239,19 @@ impl Gh {
     }
 }
 
+/// ステータス行には1行しか出せないので、原因の全文はここに残す
+pub fn log_error(error: &anyhow::Error) {
+    let path = crate::review::state_dir().join("log");
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let _ = std::fs::create_dir_all(parent);
+    let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) else {
+        return;
+    };
+    let _ = writeln!(file, "{error:?}");
+}
+
 /// herdr はプラグインに最小限の PATH しか渡さないため、よくある置き場も探す。
 /// 環境変数の書き換え（edition 2024 では unsafe）を避けるため、絶対パスを解決して使う
 fn find_gh() -> Option<PathBuf> {
