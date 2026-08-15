@@ -66,6 +66,31 @@ impl FileDiff {
             _ => false,
         }
     }
+
+    pub fn comment_target(&self, line: &DiffLine) -> Option<CommentTarget> {
+        if self.is_binary {
+            return None;
+        }
+        match line.kind {
+            LineKind::Added | LineKind::Context => Some(CommentTarget {
+                path: self.new_path.clone()?,
+                line: line.new_lineno?,
+                side: Side::Right,
+            }),
+            LineKind::Removed => Some(CommentTarget {
+                path: self.old_path.clone()?,
+                line: line.old_lineno?,
+                side: Side::Left,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommentTarget {
+    pub path: String,
+    pub line: u32,
+    pub side: Side,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -413,5 +438,55 @@ diff --git a/a.txt b/a.txt
     fn parses_hunk_header_without_counts() {
         let f = &parse(NO_NEWLINE).files[0];
         assert_eq!(f.hunks[0].lines[0].old_lineno, Some(1));
+    }
+
+    #[test]
+    fn added_line_targets_right_side() {
+        let f = &parse(SIMPLE).files[0];
+        let line = &f.hunks[0].lines[2]; // "+if token.is_empty() {"
+        let t = f.comment_target(line).unwrap();
+        assert_eq!(t.path, "src/auth.rs");
+        assert_eq!(t.line, 11);
+        assert_eq!(t.side, Side::Right);
+    }
+
+    #[test]
+    fn context_line_targets_right_side() {
+        let f = &parse(SIMPLE).files[0];
+        let line = &f.hunks[0].lines[0]; // " let token = read_token();"
+        let t = f.comment_target(line).unwrap();
+        assert_eq!(t.line, 10);
+        assert_eq!(t.side, Side::Right);
+    }
+
+    #[test]
+    fn removed_line_targets_left_side_with_old_number() {
+        let f = &parse(SIMPLE).files[0];
+        let line = &f.hunks[0].lines[1]; // "-if token.is_none() {"
+        let t = f.comment_target(line).unwrap();
+        assert_eq!(t.path, "src/auth.rs");
+        assert_eq!(t.line, 11);
+        assert_eq!(t.side, Side::Left);
+    }
+
+    #[test]
+    fn removed_line_of_deleted_file_uses_old_path() {
+        let f = &parse(MULTI).files[1]; // src/gone.rs
+        let line = &f.hunks[0].lines[0];
+        let t = f.comment_target(line).unwrap();
+        assert_eq!(t.path, "src/gone.rs");
+        assert_eq!(t.side, Side::Left);
+    }
+
+    #[test]
+    fn binary_file_has_no_comment_target() {
+        let f = &parse(MULTI).files[3];
+        let line = DiffLine {
+            kind: LineKind::Added,
+            old_lineno: None,
+            new_lineno: Some(1),
+            text: String::new(),
+        };
+        assert!(f.comment_target(&line).is_none());
     }
 }
