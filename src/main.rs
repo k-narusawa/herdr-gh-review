@@ -174,12 +174,24 @@ fn submit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, gh: &Gh) -> Re
                 let event = ui::submit::EVENTS[cursor];
                 match gh.submit_review(&app.draft, event) {
                     Ok(()) => {
-                        // 送信できたときだけ下書きを消す
-                        review::delete(&review::state_dir(), &app.draft.repo, app.draft.pr_number)?;
                         app.draft.comments.clear();
                         app.draft.body.clear();
                         app.rebuild_rows();
-                        app.status = Some(format!(" {} で提出しました ", event.label()));
+
+                        // GitHubは受理済み。下書きの後片付けが失敗しても提出の失敗として
+                        // 扱うと、ユーザーが再提出して重複レビューになりかねない
+                        let cleanup = review::delete(
+                            &review::state_dir(),
+                            &app.draft.repo,
+                            app.draft.pr_number,
+                        );
+                        app.status = Some(match cleanup {
+                            Ok(()) => format!(" {} で提出しました ", event.label()),
+                            Err(_) => format!(
+                                " {} で提出しました（下書きファイルは削除できませんでした） ",
+                                event.label()
+                            ),
+                        });
                         return Ok(());
                     }
                     Err(e) => {
