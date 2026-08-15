@@ -123,6 +123,7 @@ fn open_pr(
             " 保存されていた下書きは古いコミットのものです。行の位置を確認してください ".into(),
         );
     }
+    warn_unmatched(&mut app);
     run_diff_view(terminal, gh, &mut app, &pr)
 }
 
@@ -201,6 +202,7 @@ fn reload(app: &mut App, gh: &Gh, pr: &PrDetail) -> Result<()> {
             app.diff = diff::parse(&raw);
             app.rebuild_rows();
             app.status = Some(" 再読み込みしました ".into());
+            warn_unmatched(app);
         }
         Err(e) => {
             gh::log_error(&e);
@@ -208,6 +210,16 @@ fn reload(app: &mut App, gh: &Gh, pr: &PrDetail) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// 画面に出ないコメントは、提出時にGitHubがレビュー全体を422で拒否する原因になる
+fn warn_unmatched(app: &mut App) {
+    let n = app.unmatched_comments();
+    if n > 0 {
+        app.status = Some(format!(
+            " 現在のdiffに一致しないコメントが{n}件あります。このまま提出すると失敗します ",
+        ));
+    }
 }
 
 fn submit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, gh: &Gh) -> Result<()> {

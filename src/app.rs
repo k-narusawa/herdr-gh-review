@@ -150,6 +150,28 @@ impl App {
         let (file, line) = self.cursor_line()?;
         file.comment_target(line)
     }
+
+    /// 現在のdiffに一致する行が無い下書きコメント。PRに新しいコミットが積まれると発生し、
+    /// 画面には出ないまま提出リクエストには含まれる
+    pub fn unmatched_comments(&self) -> usize {
+        self.draft
+            .comments
+            .iter()
+            .filter(|comment| !self.is_on_current_diff(comment))
+            .count()
+    }
+
+    fn is_on_current_diff(&self, comment: &crate::review::DraftComment) -> bool {
+        self.diff.files.iter().any(|file| {
+            file.hunks.iter().flat_map(|hunk| &hunk.lines).any(|line| {
+                file.comment_target(line).is_some_and(|target| {
+                    target.path == comment.path
+                        && target.line == comment.line
+                        && target.side == comment.side
+                })
+            })
+        })
+    }
 }
 
 #[cfg(test)]
@@ -245,6 +267,30 @@ diff --git a/b.rs b/b.rs
         assert_eq!(t.path, "a.rs");
         assert_eq!(t.line, 1);
         assert_eq!(t.side, Side::Right);
+    }
+
+    #[test]
+    fn comment_on_a_current_line_is_matched() {
+        let mut a = app();
+        a.draft.upsert_comment(
+            CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
+            "見えているコメント".into(),
+        );
+        a.rebuild_rows();
+        assert_eq!(a.unmatched_comments(), 0);
+    }
+
+    #[test]
+    fn comment_on_a_vanished_line_is_reported_as_unmatched() {
+        let mut a = app();
+        a.draft.upsert_comment(
+            CommentTarget { path: "a.rs".into(), line: 999, side: Side::Right },
+            "PRが更新されて消えた行のコメント".into(),
+        );
+        a.rebuild_rows();
+        assert_eq!(a.unmatched_comments(), 1);
+        // 画面には出ない = これが罠の本体
+        assert!(!a.rows.iter().any(|r| matches!(r, Row::Comment { .. })));
     }
 
     #[test]
