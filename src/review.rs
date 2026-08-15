@@ -1,6 +1,8 @@
 use crate::diff::{CommentTarget, Side};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DraftComment {
@@ -125,6 +127,47 @@ pub fn build_review_request(
     }))
 }
 
+pub fn state_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("HERDR_PLUGIN_STATE_DIR") {
+        return PathBuf::from(dir);
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home).join(".local/state/herdr/plugins/k-narusawa.gh-review")
+}
+
+pub fn draft_path(state_dir: &Path, repo: &str, pr_number: u32) -> PathBuf {
+    state_dir
+        .join("drafts")
+        .join(format!("{}-{}.json", repo.replace('/', "-"), pr_number))
+}
+
+pub fn save(state_dir: &Path, draft: &Draft) -> Result<()> {
+    let path = draft_path(state_dir, &draft.repo, draft.pr_number);
+    std::fs::create_dir_all(path.parent().expect("draft path has a parent"))
+        .with_context(|| format!("下書きディレクトリを作れません: {}", path.display()))?;
+    let json = serde_json::to_string_pretty(draft)?;
+    std::fs::write(&path, json)
+        .with_context(|| format!("下書きを保存できません: {}", path.display()))
+}
+
+/// 壊れた下書きは無いものとして扱う。読めないファイルのために起動できない方が損失が大きい
+pub fn load(state_dir: &Path, repo: &str, pr_number: u32) -> Result<Option<Draft>> {
+    let path = draft_path(state_dir, repo, pr_number);
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Ok(None);
+    };
+    Ok(serde_json::from_str(&raw).ok())
+}
+
+pub fn delete(state_dir: &Path, repo: &str, pr_number: u32) -> Result<()> {
+    let path = draft_path(state_dir, repo, pr_number);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e).with_context(|| format!("下書きを削除できません: {}", path.display())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,5 +258,44 @@ mod tests {
         let json = serde_json::to_string(&d).unwrap();
         let back: Draft = serde_json::from_str(&json).unwrap();
         assert_eq!(d, back);
+    }
+
+    #[test]
+    fn draft_path_flattens_repo_slash() {
+        let p = draft_path(std::path::Path::new("/state"), "k-narusawa/app", 42);
+        assert_eq!(p, std::path::Path::new("/state/drafts/k-narusawa-app-42.json"));
+    }
+
+    #[test]
+    fn save_then_load_returns_same_draft() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = draft_with_two_comments();
+        save(dir.path(), &d).unwrap();
+        let loaded = load(dir.path(), "k-narusawa/app", 42).unwrap();
+        assert_eq!(loaded, Some(d));
+    }
+
+    #[test]
+    fn load_returns_none_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(load(dir.path(), "k-narusawa/app", 42).unwrap(), None);
+    }
+
+    #[test]
+    fn delete_removes_the_file_and_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        save(dir.path(), &draft_with_two_comments()).unwrap();
+        delete(dir.path(), "k-narusawa/app", 42).unwrap();
+        assert_eq!(load(dir.path(), "k-narusawa/app", 42).unwrap(), None);
+        delete(dir.path(), "k-narusawa/app", 42).unwrap();
+    }
+
+    #[test]
+    fn load_returns_none_when_file_is_corrupt() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = draft_path(dir.path(), "k-narusawa/app", 42);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "{ broken").unwrap();
+        assert_eq!(load(dir.path(), "k-narusawa/app", 42).unwrap(), None);
     }
 }
