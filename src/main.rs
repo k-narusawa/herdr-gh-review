@@ -93,7 +93,7 @@ fn open_pr(
             " 保存されていた下書きは古いコミットのものです。行の位置を確認してください ".into(),
         );
     }
-    run_diff_view(terminal, &mut app, &pr)
+    run_diff_view(terminal, gh, &mut app, &pr)
 }
 
 enum KeyOutcome {
@@ -103,6 +103,7 @@ enum KeyOutcome {
 
 fn run_diff_view(
     terminal: &mut ratatui::DefaultTerminal,
+    gh: &Gh,
     app: &mut App,
     pr: &PrDetail,
 ) -> Result<()> {
@@ -115,7 +116,7 @@ fn run_diff_view(
         if key.kind != KeyEventKind::Press {
             continue;
         }
-        match handle_key(terminal, app, key)? {
+        match handle_key(terminal, gh, app, key)? {
             KeyOutcome::Leave => return Ok(()),
             KeyOutcome::Continue => {}
         }
@@ -124,6 +125,7 @@ fn run_diff_view(
 
 fn handle_key(
     terminal: &mut ratatui::DefaultTerminal,
+    gh: &Gh,
     app: &mut App,
     key: KeyEvent,
 ) -> Result<KeyOutcome> {
@@ -144,9 +146,56 @@ fn handle_key(
         (KeyCode::Char('c'), _) => comment_on_cursor(terminal, app)?,
         (KeyCode::Char('d'), _) => delete_comment_on_cursor(app)?,
         (KeyCode::Char('e'), _) => edit_review_body(terminal, app)?,
+        (KeyCode::Char('S'), _) => submit(terminal, app, gh)?,
         _ => {}
     }
     Ok(KeyOutcome::Continue)
+}
+
+fn submit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, gh: &Gh) -> Result<()> {
+    let mut cursor = 0usize;
+
+    loop {
+        terminal.draw(|f| ui::submit::render(&app.draft, cursor, f))?;
+
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => return Ok(()),
+            KeyCode::Char('j') | KeyCode::Down => {
+                cursor = (cursor + 1).min(ui::submit::EVENTS.len() - 1)
+            }
+            KeyCode::Char('k') | KeyCode::Up => cursor = cursor.saturating_sub(1),
+            KeyCode::Enter => {
+                let event = ui::submit::EVENTS[cursor];
+                match gh.submit_review(&app.draft, event) {
+                    Ok(()) => {
+                        // 送信できたときだけ下書きを消す
+                        review::delete(&review::state_dir(), &app.draft.repo, app.draft.pr_number)?;
+                        app.draft.comments.clear();
+                        app.draft.body.clear();
+                        app.rebuild_rows();
+                        app.status = Some(format!(" {} で提出しました ", event.label()));
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        // 下書きは残したまま、原因だけ伝える
+                        app.status = Some(format!(" {} ", first_line(&e.to_string())));
+                        return Ok(());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn first_line(message: &str) -> String {
+    message.lines().next().unwrap_or(message).to_string()
 }
 
 /// 端末を一度畳んでエディタに渡し、戻ってきたら組み立て直す
