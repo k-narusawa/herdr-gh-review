@@ -168,7 +168,13 @@ fn parse_file(lines: Vec<&str>) -> FileDiff {
 }
 
 fn read_header_line(file: &mut FileDiff, line: &str) {
-    if let Some(p) = line.strip_prefix("--- ") {
+    if let Some(rest) = line.strip_prefix("diff --git ") {
+        // ponytail: パスに " b/" を含むと誤分割する。実害が出たら --- / +++ 行のみを信頼する形に戻す
+        if let Some((a, b)) = rest.split_once(" b/") {
+            file.old_path = Some(a.strip_prefix("a/").unwrap_or(a).to_string());
+            file.new_path = Some(b.to_string());
+        }
+    } else if let Some(p) = line.strip_prefix("--- ") {
         file.old_path = header_path(p);
     } else if let Some(p) = line.strip_prefix("+++ ") {
         file.new_path = header_path(p);
@@ -349,6 +355,14 @@ Binary files a/logo.png and b/logo.png differ
         let f = &parse(MULTI).files[3];
         assert!(f.is_binary);
         assert!(f.hunks.is_empty());
+    }
+
+    #[test]
+    fn binary_file_keeps_its_path() {
+        let f = &parse(MULTI).files[3];
+        assert_eq!(f.old_path.as_deref(), Some("logo.png"));
+        assert_eq!(f.new_path.as_deref(), Some("logo.png"));
+        assert_eq!(f.display_path(), "logo.png");
     }
 
     const MULTI_HUNK: &str = "\
