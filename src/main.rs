@@ -192,7 +192,10 @@ fn delete_comment_on_cursor(app: &mut App) -> Result<()> {
         },
         _ => match app.cursor_target() {
             Some(t) => t,
-            None => return Ok(()),
+            None => {
+                app.status = Some(" 削除するコメントがありません ".into());
+                return Ok(());
+            }
         },
     };
     app.draft.remove_comment(&target);
@@ -204,7 +207,16 @@ fn delete_comment_on_cursor(app: &mut App) -> Result<()> {
 fn edit_review_body(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
     let initial = app.draft.body.clone();
     let body = with_editor(terminal, || editor::edit_text(&initial))?.unwrap_or_default();
+    if body == initial {
+        return Ok(());
+    }
+
     app.draft.body = body;
     review::save(&review::state_dir(), &app.draft)?;
+    app.status = Some(if app.draft.body.is_empty() {
+        " 全体コメントを空にしました ".into()
+    } else {
+        " 全体コメントを更新しました ".into()
+    });
     Ok(())
 }
