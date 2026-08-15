@@ -1,4 +1,5 @@
 mod diff;
+mod gh;
 mod review;
 
 fn main() {
