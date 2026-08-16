@@ -8,6 +8,7 @@ diffを読み、行コメントを書き、レビューとして提出すると�
 - herdr 0.7.5 以上
 - [gh](https://cli.github.com/) 2.x（`gh auth login` 済みであること）
 - Rust 1.85 以上（edition 2024）。開発は `mise.toml` で 1.97.1 に固定
+- [delta](https://github.com/dandavison/delta)（任意）。PATHにあればdiffに構文ハイライトと語単位の強調が付く。gitconfigの `[delta]` 設定（テーマ等）をそのまま使う。無ければ従来の +/- 色で表示する
 
 ## インストール
 

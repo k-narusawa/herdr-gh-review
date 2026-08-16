@@ -26,6 +26,8 @@ pub enum Row {
 
 pub struct App {
     pub diff: ParsedDiff,
+    /// deltaが色付けした生diffの各行。deltaが使えなければ `None`
+    pub colored: Option<Vec<String>>,
     pub draft: Draft,
     pub collapsed: HashSet<usize>,
     pub rows: Vec<Row>,
@@ -35,9 +37,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(diff: ParsedDiff, draft: Draft) -> Self {
+    pub fn new(raw_diff: &str, draft: Draft) -> Self {
         let mut app = Self {
-            diff,
+            diff: ParsedDiff { files: Vec::new() },
+            colored: None,
             draft,
             collapsed: HashSet::new(),
             rows: Vec::new(),
@@ -45,8 +48,19 @@ impl App {
             scroll: 0,
             status: None,
         };
-        app.rebuild_rows();
+        app.set_diff(raw_diff);
         app
+    }
+
+    pub fn set_diff(&mut self, raw_diff: &str) {
+        self.diff = crate::diff::parse(raw_diff);
+        self.colored = crate::delta::colorize(raw_diff);
+        self.rebuild_rows();
+    }
+
+    /// deltaが色付けした行。行番号カラムの右に、マーカーごとそのまま出す
+    pub fn colored_line(&self, raw_idx: usize) -> Option<&str> {
+        Some(self.colored.as_ref()?.get(raw_idx)?.as_str())
     }
 
     pub fn rebuild_rows(&mut self) {
@@ -196,7 +210,7 @@ diff --git a/b.rs b/b.rs
 
     fn app() -> App {
         App::new(
-            crate::diff::parse(TWO_FILES),
+            TWO_FILES,
             crate::review::Draft::new("o/r", 1, "sha"),
         )
     }
@@ -296,7 +310,7 @@ diff --git a/b.rs b/b.rs
     #[test]
     fn empty_diff_survives_every_cursor_operation() {
         let mut a = App::new(
-            crate::diff::parse(""),
+            "",
             crate::review::Draft::new("o/r", 1, "sha"),
         );
         assert!(a.rows.is_empty());

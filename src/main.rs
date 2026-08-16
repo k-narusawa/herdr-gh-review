@@ -1,4 +1,5 @@
 mod app;
+mod delta;
 mod diff;
 mod editor;
 mod gh;
@@ -139,12 +140,12 @@ fn open_pr(
     number: u32,
 ) -> Result<()> {
     let pr = gh.pr_detail(repo, number)?;
-    let parsed = diff::parse(&gh.pr_diff(&pr.repo, pr.number)?);
+    let raw = gh.pr_diff(&pr.repo, pr.number)?;
     let state = review::state_dir();
     let draft = review::load(&state, &pr.repo, pr.number)?
         .unwrap_or_else(|| review::Draft::new(&pr.repo, pr.number, &pr.head_sha));
 
-    let mut app = App::new(parsed, draft);
+    let mut app = App::new(&raw, draft);
     if app.draft.head_sha != pr.head_sha {
         app.status = Some(
             " 保存されていた下書きは古いコミットのものです。行の位置を確認してください ".into(),
@@ -226,8 +227,7 @@ fn handle_key(
 fn reload(app: &mut App, gh: &Gh, pr: &PrDetail) -> Result<()> {
     match gh.pr_diff(&pr.repo, pr.number) {
         Ok(raw) => {
-            app.diff = diff::parse(&raw);
-            app.rebuild_rows();
+            app.set_diff(&raw);
             app.status = Some(" 再読み込みしました ".into());
             warn_unmatched(app);
         }

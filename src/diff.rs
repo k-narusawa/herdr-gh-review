@@ -20,6 +20,8 @@ pub struct DiffLine {
     pub old_lineno: Option<u32>,
     pub new_lineno: Option<u32>,
     pub text: String,
+    /// 生diffの何行目か。deltaが色付けした行と突き合わせるためだけに持つ
+    pub raw_idx: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,20 +106,20 @@ pub fn parse(input: &str) -> ParsedDiff {
     }
 }
 
-fn split_files(input: &str) -> Vec<Vec<&str>> {
-    let mut chunks: Vec<Vec<&str>> = Vec::new();
-    for line in input.lines() {
+fn split_files(input: &str) -> Vec<Vec<(usize, &str)>> {
+    let mut chunks: Vec<Vec<(usize, &str)>> = Vec::new();
+    for (raw_idx, line) in input.lines().enumerate() {
         if line.starts_with("diff --git ") || (chunks.is_empty() && line.starts_with("--- ")) {
             chunks.push(Vec::new());
         }
         if let Some(last) = chunks.last_mut() {
-            last.push(line);
+            last.push((raw_idx, line));
         }
     }
     chunks
 }
 
-fn parse_file(lines: Vec<&str>) -> FileDiff {
+fn parse_file(lines: Vec<(usize, &str)>) -> FileDiff {
     let mut file = FileDiff {
         old_path: None,
         new_path: None,
@@ -128,7 +130,7 @@ fn parse_file(lines: Vec<&str>) -> FileDiff {
     let mut new_no = 0u32;
     let mut in_hunk = false;
 
-    for line in lines {
+    for (raw_idx, line) in lines {
         if line.starts_with("@@") {
             let (o, n) = parse_hunk_header(line);
             old_no = o;
@@ -186,6 +188,7 @@ fn parse_file(lines: Vec<&str>) -> FileDiff {
             old_lineno,
             new_lineno,
             text: text.to_string(),
+            raw_idx,
         });
     }
 
@@ -486,7 +489,25 @@ diff --git a/a.txt b/a.txt
             old_lineno: None,
             new_lineno: Some(1),
             text: String::new(),
+            raw_idx: 0,
         };
         assert!(f.comment_target(&line).is_none());
+    }
+
+    #[test]
+    fn raw_idx_points_back_at_the_source_line() {
+        let d = parse(SIMPLE);
+        let src: Vec<&str> = SIMPLE.lines().collect();
+        for line in &d.files[0].hunks[0].lines {
+            assert_eq!(&src[line.raw_idx][1..], line.text);
+        }
+    }
+
+    #[test]
+    fn raw_idx_keeps_counting_across_files() {
+        let d = parse(MULTI);
+        let src: Vec<&str> = MULTI.lines().collect();
+        let deleted = &d.files[1].hunks[0].lines[0]; // 2ファイル目の "-fn removed() {}"
+        assert_eq!(src[deleted.raw_idx], "-fn removed() {}");
     }
 }

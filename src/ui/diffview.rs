@@ -1,6 +1,7 @@
 use crate::app::{App, Row};
 use crate::diff::LineKind;
 use crate::gh::PrDetail;
+use ansi_to_tui::IntoText;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -102,20 +103,29 @@ fn row_to_line<'a>(app: &'a App, row: &'a Row, is_cursor: bool) -> Line<'a> {
         )),
         Row::Line { file_idx, hunk_idx, line_idx } => {
             let line = &app.diff.files[*file_idx].hunks[*hunk_idx].lines[*line_idx];
-            let (marker, color) = match line.kind {
-                LineKind::Added => ('+', Color::Green),
-                LineKind::Removed => ('-', Color::Red),
-                LineKind::Context => (' ', Color::Reset),
-            };
             let number = line
                 .new_lineno
                 .or(line.old_lineno)
                 .map(|n| format!("{n:>5}"))
                 .unwrap_or_else(|| "     ".to_string());
-            Line::from(vec![
-                Span::styled(format!("{number} "), Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{marker}{}", line.text), Style::default().fg(color)),
-            ])
+            let number = Span::styled(format!("{number} "), Style::default().fg(Color::DarkGray));
+
+            let mut spans = vec![number];
+            match app.colored_line(line.raw_idx).and_then(ansi_spans) {
+                Some(colored) => spans.extend(colored),
+                None => {
+                    let (marker, color) = match line.kind {
+                        LineKind::Added => ('+', Color::Green),
+                        LineKind::Removed => ('-', Color::Red),
+                        LineKind::Context => (' ', Color::Reset),
+                    };
+                    spans.push(Span::styled(
+                        format!("{marker}{}", line.text),
+                        Style::default().fg(color),
+                    ));
+                }
+            }
+            Line::from(spans)
         }
         Row::Comment { body_line, .. } => Line::from(Span::styled(
             format!("      💬 {body_line}"),
@@ -130,9 +140,15 @@ fn row_to_line<'a>(app: &'a App, row: &'a Row, is_cursor: bool) -> Line<'a> {
     }
 }
 
+/// ANSI付きの1行をratatuiのスパンに変換する。壊れていたら`None`（自前の色に落ちる）
+fn ansi_spans(raw: &str) -> Option<Vec<Span<'static>>> {
+    let text = raw.as_bytes().into_text().ok()?;
+    Some(text.lines.into_iter().next()?.spans)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::clamp_scroll;
+    use super::{ansi_spans, clamp_scroll};
 
     #[test]
     fn keeps_scroll_when_cursor_is_visible() {
@@ -152,5 +168,20 @@ mod tests {
     #[test]
     fn handles_zero_height() {
         assert_eq!(clamp_scroll(5, 5, 0), 0);
+    }
+
+    #[test]
+    fn splits_an_ansi_line_into_styled_spans() {
+        let spans = ansi_spans("\x1b[32m+ok\x1b[0m").unwrap();
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, "+ok");
+        assert!(spans.iter().any(|s| s.style.fg.is_some()));
+    }
+
+    #[test]
+    fn keeps_plain_text_as_one_span() {
+        let spans = ansi_spans(" fn main() {").unwrap();
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(text, " fn main() {");
     }
 }
