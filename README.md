@@ -8,7 +8,7 @@ Other herdr review panes point at your agent's diff and hand the notes back to t
 This one points at a pull request and posts to GitHub.
 
 It also answers the question you actually start from — *what am I supposed to review?* — with
-cross-repository lists of the PRs waiting on you and the PRs you opened.
+lists of the pull requests in this repository that are waiting on you, and the ones you opened.
 
 ## Requirements
 
@@ -32,11 +32,11 @@ bash ./herdr-gh-review/herdr/install.sh
 | Action | What it opens |
 |---|---|
 | `gh-review: open PR list` | Open PRs in the current repository |
-| `gh-review: PRs awaiting my review` | PRs that requested your review, across repositories |
-| `gh-review: my open PRs` | PRs you opened, across repositories — for reviewing yourself first |
+| `gh-review: PRs awaiting my review` | PRs in this repository that requested your review |
+| `gh-review: my open PRs` | PRs you opened in this repository — for reviewing yourself first |
 | Click a PR URL | That pull request, directly |
 
-Only `open PR list` looks at the current repository's remote; the others work from anywhere.
+All three lists read the current directory's remote.
 
 To launch it by hand, pass `--review-requested`, `--authored`, `--pr <number>`, or `--url <url>`.
 

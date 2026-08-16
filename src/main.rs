@@ -57,11 +57,6 @@ impl ListKind {
             ListKind::Authored => gh.search_authored(),
         }
     }
-
-    /// Only the repository list depends on the current directory's remote
-    fn needs_repo(self) -> bool {
-        self == ListKind::Repo
-    }
 }
 
 fn run_pr_list(
@@ -79,7 +74,7 @@ fn run_pr_list(
         Ok(v) => prs = v,
         Err(e) => {
             gh::log_error(&e);
-            status = Some(fetch_error_message(&e, kind));
+            status = Some(first_line(&e.to_string()));
         }
     }
 
@@ -107,13 +102,13 @@ fn run_pr_list(
                     }
                     Err(e) => {
                         gh::log_error(&e);
-                        status = Some(fetch_error_message(&e, kind));
+                        status = Some(first_line(&e.to_string()));
                     }
                 }
             }
             KeyCode::Enter => {
                 if let Some(pr) = prs.get(cursor)
-                    && let Err(e) = open_pr(terminal, gh, pr.repo.as_deref(), pr.number)
+                    && let Err(e) = open_pr(terminal, gh, None, pr.number)
                 {
                     gh::log_error(&e);
                     status = Some(first_line(&e.to_string()));
@@ -122,15 +117,6 @@ fn run_pr_list(
             _ => {}
         }
     }
-}
-
-/// By far the most common cause is a cwd that is not a GitHub repository, so point at the way out
-fn fetch_error_message(error: &anyhow::Error, kind: ListKind) -> String {
-    let message = first_line(&error.to_string());
-    if !kind.needs_repo() {
-        return message;
-    }
-    format!("{message} (--review-requested / --authored work from anywhere)")
 }
 
 fn open_pr(

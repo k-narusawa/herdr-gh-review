@@ -35,14 +35,13 @@ pub fn render(prs: &[PrSummary], cursor: usize, title: &str, status: Option<&str
             .iter()
             .enumerate()
             .map(|(i, pr)| {
-                let repo = pr.repo.as_deref().map(|r| format!("{r} ")).unwrap_or_default();
                 let counts = match (pr.additions, pr.deletions) {
                     (Some(a), Some(d)) => format!("  +{a} -{d}"),
                     _ => String::new(),
                 };
                 let draft = if pr.is_draft { " [draft]" } else { "" };
                 let line = Line::from(vec![
-                    Span::styled(format!(" {repo}#{:<6}", pr.number), Style::default().fg(Color::Cyan)),
+                    Span::styled(format!(" #{:<6}", pr.number), Style::default().fg(Color::Cyan)),
                     Span::raw(pr.title.clone()),
                     Span::styled(format!("  @{}{counts}{draft}", pr.author), Style::default().fg(Color::DarkGray)),
                 ]);
