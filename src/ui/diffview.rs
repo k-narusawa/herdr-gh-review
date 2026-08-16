@@ -159,7 +159,16 @@ fn line_spans<'a>(app: &'a App, line: &'a DiffLine, number: Option<u32>) -> Vec<
             ));
         }
     }
-    spans
+    spans.into_iter().map(expand_tabs).collect()
+}
+
+/// タブはratatuiの幅計算と実際の描画セル数が食い違い、split表示の区切りがずれる。
+/// ponytail: タブストップではなく固定4桁。行頭インデントしか含まないコードでは同じ見た目になる
+fn expand_tabs(span: Span<'_>) -> Span<'_> {
+    if !span.content.contains('\t') {
+        return span;
+    }
+    Span::styled(span.content.replace('\t', "    "), span.style)
 }
 
 fn pair_to_line<'a>(
@@ -361,6 +370,50 @@ diff --git a/a.rs b/a.rs
         let (left, right) = text.split_once('│').expect("区切りが無い");
         assert!(left.contains("-two"));
         assert!(right.trim().is_empty(), "右セルが空でない: {right:?}");
+    }
+
+    /// タブとCJKは幅計算と実際の描画セル数がずれやすい。区切りが1桁でも動くと
+    /// 縦線が途切れて読めなくなるので、実際に描いた結果で見る
+    #[test]
+    fn the_separator_stays_in_one_column() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        const TABS_AND_CJK: &str = "\
+diff --git a/ai.go b/ai.go
+--- a/ai.go
++++ b/ai.go
+@@ -1,4 +1,4 @@
+ // Command は内容を一時ファイルに書く
+-func Command(aiCmd string) (*exec.Cmd, error) {
++func Command(aiCmd string) (*exec.Cmd, string, error) {
+ \treturn command(aiCmd)
+ }
+";
+        const W: u16 = 100;
+        let mut app = App::new(TABS_AND_CJK, crate::review::Draft::new("o/r", 1, "sha"));
+        app.toggle_split();
+        app.show_tree = false;
+
+        let mut terminal = Terminal::new(TestBackend::new(W, 10)).unwrap();
+        terminal
+            .draw(|f| render_diff(&mut app, f, f.area()))
+            .unwrap();
+
+        let columns: Vec<Vec<u16>> = (0..10)
+            .map(|row| {
+                (0..W)
+                    .filter(|c| terminal.backend().buffer()[(*c, row)].symbol() == "│")
+                    .collect()
+            })
+            .filter(|cols: &Vec<u16>| !cols.is_empty())
+            .collect();
+
+        assert!(columns.len() >= 4, "Pair行が描かれていない: {columns:?}");
+        assert!(
+            columns.iter().all(|c| c == &columns[0]),
+            "区切りの桁がそろっていない: {columns:?}"
+        );
     }
 }
 
