@@ -14,6 +14,15 @@ pub enum Side {
     Left,
 }
 
+impl Side {
+    pub fn flip(self) -> Self {
+        match self {
+            Side::Right => Side::Left,
+            Side::Left => Side::Right,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffLine {
     pub kind: LineKind,
