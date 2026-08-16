@@ -83,13 +83,26 @@ comments in this pane, marked `[AI]`, and you edit, delete, or submit them as yo
 
 The pane stays open, so you can keep talking to the agent about what it found.
 
-"Nothing is posted to GitHub" is enforced, not requested. The agent is started with `gh pr
-comment`, `gh pr review`, `gh pr edit`, `gh pr merge`, `gh pr close`, `gh pr ready`, `gh issue
-comment` and `gh api` denied at the tool layer, which outranks the permission mode and does not
-depend on your settings. A review skill that ends by posting a comment is stopped there.
+### What the agent is and isn't allowed to do
 
-It is also started with an explicit permission mode, so the pane behaves the same whatever your
-`permissions.defaultMode` is.
+A pull request's diff is written by whoever opened it, so everything the agent reads is
+untrusted input. It is started with an explicit permission set rather than inheriting yours.
+
+**Denied outright** — these outrank the permission mode, so a review skill that ends by posting
+a comment is stopped there: `gh pr comment`, `gh pr review`, `gh pr edit`, `gh pr merge`,
+`gh pr close`, `gh pr ready`, `gh issue comment`, `gh api`, `git push`, `git commit`, `rm`,
+`curl`, `wget`, `nc`, `ssh`, `scp`, `WebFetch`, `WebSearch`.
+
+**Pre-approved** — so the review never stops to ask: `gh pr diff`, `gh pr view`, `git diff`,
+`git log`, `git show`, `git blame`, `mv`, reading and searching files, and writing inside the
+handoff directory only.
+
+**Everything else prompts you in the pane.** Writing to a file anywhere else does, above all.
+That prompt is the only thing that catches an instruction smuggled into a diff that nobody
+thought to put on the deny list — so read what it is asking before you approve it.
+
+A deny list is a floor, not a ceiling: `python3 -c` still reaches the network. Closing that
+needs a sandbox with no egress, which this plugin does not set up.
 
 Set `GH_REVIEW_AI_CMD` to run something other than `claude`. It must be a single executable name
 or path — it is not passed through a shell, so it cannot carry extra arguments. **The deny rules
