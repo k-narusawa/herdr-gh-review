@@ -24,6 +24,7 @@ fi
 case "$mode" in
   open)             target="" ;;
   review-requested) target="review-requested" ;;
+  authored)         target="authored" ;;
   open-url)
     # クリックされたURLは専用の環境変数で届く（公式browserプラグインの実装で確認済み）
     target="${HERDR_PLUGIN_CLICKED_URL:-}"
@@ -33,7 +34,7 @@ case "$mode" in
     fi
     ;;
   *)
-    echo "usage: pane.sh {open|review-requested|open-url}" >&2
+    echo "usage: pane.sh {open|review-requested|authored|open-url}" >&2
     exit 1
     ;;
 esac

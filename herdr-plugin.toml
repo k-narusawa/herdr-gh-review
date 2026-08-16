@@ -28,6 +28,12 @@ contexts = ["pane", "workspace"]
 command = ["bash", "herdr/pane.sh", "review-requested"]
 
 [[actions]]
+id = "authored"
+title = "gh-review: my open PRs"
+contexts = ["pane", "workspace"]
+command = ["bash", "herdr/pane.sh", "authored"]
+
+[[actions]]
 id = "open-url"
 title = "gh-review: open PR URL"
 contexts = ["workspace"]

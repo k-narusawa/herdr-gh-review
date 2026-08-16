@@ -27,31 +27,58 @@ fn main() -> Result<()> {
 fn run(terminal: &mut ratatui::DefaultTerminal, gh: &Gh, target: Target) -> Result<()> {
     match target {
         Target::Pr { repo, number } => open_pr(terminal, gh, repo.as_deref(), number),
-        Target::RepoPrList => run_pr_list(terminal, gh, false),
-        Target::ReviewRequested => run_pr_list(terminal, gh, true),
+        Target::RepoPrList => run_pr_list(terminal, gh, ListKind::Repo),
+        Target::ReviewRequested => run_pr_list(terminal, gh, ListKind::ReviewRequested),
+        Target::Authored => run_pr_list(terminal, gh, ListKind::Authored),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ListKind {
+    Repo,
+    ReviewRequested,
+    Authored,
+}
+
+impl ListKind {
+    fn title(self) -> &'static str {
+        match self {
+            ListKind::Repo => "Open pull requests",
+            ListKind::ReviewRequested => "PRs awaiting my review",
+            ListKind::Authored => "My pull requests",
+        }
+    }
+
+    fn fetch(self, gh: &Gh) -> Result<Vec<PrSummary>> {
+        match self {
+            ListKind::Repo => gh.list_prs(),
+            ListKind::ReviewRequested => gh.search_review_requested(),
+            ListKind::Authored => gh.search_authored(),
+        }
+    }
+
+    /// カレントディレクトリのリモートに依存するのはリポジトリ一覧だけ
+    fn needs_repo(self) -> bool {
+        self == ListKind::Repo
     }
 }
 
 fn run_pr_list(
     terminal: &mut ratatui::DefaultTerminal,
     gh: &Gh,
-    review_requested: bool,
+    kind: ListKind,
 ) -> Result<()> {
-    let (title, fetch): (&str, fn(&Gh) -> Result<Vec<PrSummary>>) = if review_requested {
-        ("PRs awaiting my review", Gh::search_review_requested)
-    } else {
-        ("Open pull requests", Gh::list_prs)
-    };
+    let title = kind.title();
 
     let mut prs = Vec::new();
     let mut cursor = 0usize;
     let mut status: Option<String> = None;
 
-    match fetch(gh) {
+    match kind.fetch(gh) {
         Ok(v) => prs = v,
         Err(e) => {
             gh::log_error(&e);
-            status = Some(fetch_error_message(&e, review_requested));
+            status = Some(fetch_error_message(&e, kind));
         }
     }
 
@@ -72,14 +99,14 @@ fn run_pr_list(
             KeyCode::Char('k') | KeyCode::Up => cursor = cursor.saturating_sub(1),
             KeyCode::Char('r') => {
                 status = None;
-                match fetch(gh) {
+                match kind.fetch(gh) {
                     Ok(v) => {
                         prs = v;
                         cursor = 0;
                     }
                     Err(e) => {
                         gh::log_error(&e);
-                        status = Some(fetch_error_message(&e, review_requested));
+                        status = Some(fetch_error_message(&e, kind));
                     }
                 }
             }
@@ -97,12 +124,12 @@ fn run_pr_list(
 }
 
 /// カレントディレクトリがGitHubリポジトリでない場合が最も多いので、そのときだけ次の手を添える
-fn fetch_error_message(error: &anyhow::Error, review_requested: bool) -> String {
+fn fetch_error_message(error: &anyhow::Error, kind: ListKind) -> String {
     let message = first_line(&error.to_string());
-    if review_requested {
+    if !kind.needs_repo() {
         return message;
     }
-    format!("{message}（--review-requested なら任意の場所から使えます）")
+    format!("{message}（--review-requested / --authored なら任意の場所から使えます）")
 }
 
 fn open_pr(
