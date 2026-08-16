@@ -18,6 +18,7 @@ const KEYS: &[(&str, &str)] = &[
     ("D", "discard comments no longer in the diff"),
     ("e", "edit the review summary"),
     ("S", "submit"),
+    ("A", "ask the AI to review this PR"),
     ("o", "open in a browser"),
     ("r", "reload"),
     ("q", "back"),

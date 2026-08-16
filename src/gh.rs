@@ -186,6 +186,11 @@ impl Gh {
         Ok(())
     }
 
+    pub fn current_repo(&self) -> Result<String> {
+        let out = self.run(&["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])?;
+        Ok(out.trim().to_string())
+    }
+
     pub fn submit_review(&self, draft: &Draft, event: ReviewEvent) -> Result<()> {
         let body = build_review_request(draft, event)?;
         let endpoint = format!("repos/{}/pulls/{}/reviews", draft.repo, draft.pr_number);

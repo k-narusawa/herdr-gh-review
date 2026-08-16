@@ -66,12 +66,26 @@ side leaves the other blank. Comments attach to the line in the cell under the c
 | `D` | Discard comments that are no longer in the diff |
 | `e` | Edit the review summary |
 | `S` | Submit (Comment / Approve / Request changes) |
+| `A` | Ask the AI to review this PR in its own pane |
 | `o` | Open the PR in a browser |
 | `r` | Reload |
 | `?` | Show the keys |
 | `q` | Back / quit |
 
 Reviews in progress are saved automatically, and cleared only once a submit succeeds.
+
+## AI review
+
+`A` splits off a pane, starts `claude` in it, and asks it to review the pull request with the
+built-in `/code-review` skill. Nothing is posted to GitHub — the findings come back as draft
+comments in this pane, marked `[AI]`, and you edit, delete, or submit them as your own.
+
+The pane stays open, so you can keep talking to the agent about what it found.
+
+Set `GH_REVIEW_AI_CMD` to run something other than `claude`.
+
+AI review only works on pull requests in the current repository, so a PR opened from a URL
+in another repository cannot use it.
 
 ## When the PR gets new commits
 

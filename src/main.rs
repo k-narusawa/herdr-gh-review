@@ -12,6 +12,7 @@ use anyhow::Result;
 use app::App;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use gh::{Gh, PrDetail, PrSummary};
+use std::time::Duration;
 use target::Target;
 
 fn main() -> Result<()> {
@@ -161,6 +162,12 @@ fn run_diff_view(
     loop {
         terminal.draw(|f| ui::diffview::render(app, pr, f))?;
 
+        // The AI writes its review in another pane, so look for it between key presses
+        if !event::poll(Duration::from_millis(500))? {
+            merge_ai_review(app);
+            continue;
+        }
+
         let Event::Key(key) = event::read()? else {
             continue;
         };
@@ -172,6 +179,32 @@ fn run_diff_view(
             KeyOutcome::Continue => {}
         }
     }
+}
+
+fn merge_ai_review(app: &mut App) {
+    let state = review::state_dir();
+    let review = match ai::take(&state, &app.draft.repo, app.draft.pr_number) {
+        Ok(Some(review)) => review,
+        Ok(None) => return,
+        Err(e) => {
+            gh::log_error(&e);
+            app.status = Some(format!(" {} ", first_line(&e.to_string())));
+            return;
+        }
+    };
+
+    let merged = ai::merge(app, review);
+    if let Err(e) = review::save(&state, &app.draft) {
+        gh::log_error(&e);
+    }
+    app.rebuild_rows();
+    app.status = Some(match merged.skipped {
+        0 => format!(" merged {} AI comments ", merged.added),
+        n => format!(
+            " merged {} AI comments ({n} skipped: not in the diff, or already commented) ",
+            merged.added
+        ),
+    });
 }
 
 fn handle_key(
@@ -204,6 +237,7 @@ fn handle_key(
         (KeyCode::Char('D'), _) => discard_stale_comments(app)?,
         (KeyCode::Char('e'), _) => edit_review_body(terminal, app)?,
         (KeyCode::Char('S'), _) => submit(terminal, app, gh)?,
+        (KeyCode::Char('A'), _) => start_ai_review(app, gh),
         (KeyCode::Char('o'), _) => {
             if let Err(e) = gh.open_in_browser(&app.draft.repo, app.draft.pr_number) {
                 gh::log_error(&e);
@@ -401,4 +435,45 @@ fn edit_review_body(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
         " updated the review summary ".into()
     });
     Ok(())
+}
+
+/// Open a pane for the AI and hand it the review. The result lands in a file
+/// that the event loop picks up; nothing here waits for it
+fn start_ai_review(app: &mut App, gh: &Gh) {
+    match gh.current_repo() {
+        Ok(repo) if repo == app.draft.repo => {}
+        Ok(_) => {
+            app.status = Some(" AI review works only on the current repository's PRs ".into());
+            return;
+        }
+        Err(e) => {
+            gh::log_error(&e);
+            app.status = Some(format!(" {} ", first_line(&e.to_string())));
+            return;
+        }
+    }
+
+    let Ok(root) = std::env::var("HERDR_PLUGIN_ROOT") else {
+        app.status = Some(" AI review needs to run inside a herdr pane ".into());
+        return;
+    };
+
+    let out = ai::review_path(&review::state_dir(), &app.draft.repo, app.draft.pr_number);
+    let spawned = std::process::Command::new("bash")
+        .arg(format!("{root}/herdr/ai.sh"))
+        .arg(&app.draft.repo)
+        .arg(app.draft.pr_number.to_string())
+        .arg(&out)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+
+    app.status = Some(match spawned {
+        Ok(_) => " asked the AI to review this PR ".into(),
+        Err(e) => {
+            let e = anyhow::Error::from(e);
+            gh::log_error(&e);
+            format!(" {} ", first_line(&e.to_string()))
+        }
+    });
 }
