@@ -58,7 +58,7 @@ impl ListKind {
         }
     }
 
-    /// カレントディレクトリのリモートに依存するのはリポジトリ一覧だけ
+    /// Only the repository list depends on the current directory's remote
     fn needs_repo(self) -> bool {
         self == ListKind::Repo
     }
@@ -112,11 +112,11 @@ fn run_pr_list(
                 }
             }
             KeyCode::Enter => {
-                if let Some(pr) = prs.get(cursor) {
-                    if let Err(e) = open_pr(terminal, gh, pr.repo.as_deref(), pr.number) {
-                        gh::log_error(&e);
-                        status = Some(first_line(&e.to_string()));
-                    }
+                if let Some(pr) = prs.get(cursor)
+                    && let Err(e) = open_pr(terminal, gh, pr.repo.as_deref(), pr.number)
+                {
+                    gh::log_error(&e);
+                    status = Some(first_line(&e.to_string()));
                 }
             }
             _ => {}
@@ -124,13 +124,13 @@ fn run_pr_list(
     }
 }
 
-/// カレントディレクトリがGitHubリポジトリでない場合が最も多いので、そのときだけ次の手を添える
+/// By far the most common cause is a cwd that is not a GitHub repository, so point at the way out
 fn fetch_error_message(error: &anyhow::Error, kind: ListKind) -> String {
     let message = first_line(&error.to_string());
     if !kind.needs_repo() {
         return message;
     }
-    format!("{message}（--review-requested / --authored なら任意の場所から使えます）")
+    format!("{message} (--review-requested / --authored work from anywhere)")
 }
 
 fn open_pr(
@@ -147,15 +147,14 @@ fn open_pr(
 
     let mut app = App::new(&raw, draft);
     if app.draft.head_sha != pr.head_sha {
-        app.status = Some(
-            " 保存されていた下書きは古いコミットのものです。行の位置を確認してください ".into(),
-        );
+        app.status =
+            Some(" the saved draft predates the current commit — check the line positions ".into());
     }
     sync_head(&mut app, &pr);
     run_diff_view(terminal, gh, &mut app, &mut pr)
 }
 
-/// commit_id は常にPRの現在のheadを指す。古いSHAのまま提出するとGitHubに拒否される
+/// commit_id always points at the PR's current head; GitHub rejects a submit on a stale SHA
 fn sync_head(app: &mut App, pr: &PrDetail) {
     app.draft.head_sha = pr.head_sha.clone();
     warn_stale(app);
@@ -226,7 +225,7 @@ fn handle_key(
         }
         (KeyCode::Char('r'), _) => reload(app, gh, pr)?,
         (KeyCode::Char('?'), _) => {
-            terminal.draw(|f| ui::help::render(f))?;
+            terminal.draw(ui::help::render)?;
             let _ = event::read()?;
         }
         _ => {}
@@ -234,7 +233,7 @@ fn handle_key(
     Ok(KeyOutcome::Continue)
 }
 
-/// 下書きは残したままPRを取り直す。失敗しても今の画面は壊さない
+/// Refetch the PR, keeping the draft. A failure leaves the current screen intact
 fn reload(app: &mut App, gh: &Gh, pr: &mut PrDetail) -> Result<()> {
     let fetched = gh
         .pr_detail(Some(&pr.repo), pr.number)
@@ -244,7 +243,7 @@ fn reload(app: &mut App, gh: &Gh, pr: &mut PrDetail) -> Result<()> {
         Ok((raw, detail)) => {
             *pr = detail;
             app.set_diff(&raw);
-            app.status = Some(" 再読み込みしました ".into());
+            app.status = Some(" reloaded ".into());
             sync_head(app, pr);
         }
         Err(e) => {
@@ -255,12 +254,12 @@ fn reload(app: &mut App, gh: &Gh, pr: &mut PrDetail) -> Result<()> {
     Ok(())
 }
 
-/// 画面に出ないまま提出から外れるコメントがあることは、必ず伝える
+/// Comments that drop out of a submit without ever showing on screen must always be announced
 fn warn_stale(app: &mut App) {
     let n = app.stale_comments();
     if n > 0 {
         app.status = Some(format!(
-            " 現在のdiffに無い行のコメントが{n}件あります。提出しても送られません（D で破棄） ",
+            " {n} comments are on lines no longer in the diff and will not be sent (D discards) ",
         ));
     }
 }
@@ -268,12 +267,12 @@ fn warn_stale(app: &mut App) {
 fn discard_stale_comments(app: &mut App) -> Result<()> {
     let n = app.discard_stale_comments();
     if n == 0 {
-        app.status = Some(" 破棄するコメントはありません ".into());
+        app.status = Some(" nothing to discard ".into());
         return Ok(());
     }
     review::save(&review::state_dir(), &app.draft)?;
     app.rebuild_rows();
-    app.status = Some(format!(" 現在のdiffに無いコメントを{n}件破棄しました "));
+    app.status = Some(format!(" discarded {n} comments no longer in the diff "));
     Ok(())
 }
 
@@ -300,13 +299,13 @@ fn submit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, gh: &Gh) -> Re
                 let event = ui::submit::EVENTS[cursor];
                 match gh.submit_review(&app.submittable_draft(), event) {
                     Ok(()) => {
-                        // 送れたものだけ下書きから消す。送れなかったコメントは書き直せるように残す
+                        // Drop only what was sent; the rest stays so it can be rewritten
                         app.draft.body.clear();
                         let kept = app.retain_stale_comments();
                         app.rebuild_rows();
 
-                        // GitHubは受理済み。下書きの後片付けが失敗しても提出の失敗として
-                        // 扱うと、ユーザーが再提出して重複レビューになりかねない
+                        // GitHub already accepted it. Treating a failed cleanup as a failed
+                        // submit would invite a resubmit, and a duplicate review with it
                         let state = review::state_dir();
                         let cleanup = if kept == 0 {
                             review::delete(&state, &app.draft.repo, app.draft.pr_number)
@@ -314,15 +313,15 @@ fn submit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, gh: &Gh) -> Re
                             review::save(&state, &app.draft)
                         };
                         app.status = Some(match (cleanup, kept) {
-                            (Ok(()), 0) => format!(" {} で提出しました ", event.label()),
+                            (Ok(()), 0) => format!(" submitted as {} ", event.label()),
                             (Ok(()), n) => format!(
-                                " {} で提出しました（現在のdiffに無い{n}件は送っていません） ",
+                                " submitted as {} ({n} not in the current diff were not sent) ",
                                 event.label()
                             ),
                             (Err(e), _) => {
                                 gh::log_error(&e);
                                 format!(
-                                    " {} で提出しました（下書きファイルを更新できませんでした） ",
+                                    " submitted as {} (the draft file could not be updated) ",
                                     event.label()
                                 )
                             }
@@ -330,7 +329,7 @@ fn submit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, gh: &Gh) -> Re
                         return Ok(());
                     }
                     Err(e) => {
-                        // 下書きは残したまま、原因だけ伝える
+                        // Keep the draft, report the cause
                         app.status = Some(format!(" {} ", first_line(&e.to_string())));
                         return Ok(());
                     }
@@ -345,7 +344,7 @@ fn first_line(message: &str) -> String {
     message.lines().next().unwrap_or(message).to_string()
 }
 
-/// 端末を一度畳んでエディタに渡し、戻ってきたら組み立て直す
+/// Tear the terminal down, hand it to the editor, and rebuild it on the way back
 fn with_editor<T>(
     terminal: &mut ratatui::DefaultTerminal,
     f: impl FnOnce() -> Result<T>,
@@ -359,7 +358,7 @@ fn with_editor<T>(
 
 fn comment_on_cursor(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<()> {
     let Some(target) = app.cursor_target() else {
-        app.status = Some(" この行にはコメントできません ".into());
+        app.status = Some(" this line cannot take a comment ".into());
         return Ok(());
     };
     let initial = app
@@ -369,7 +368,7 @@ fn comment_on_cursor(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> 
         .unwrap_or_default();
 
     let Some(body) = with_editor(terminal, || editor::edit_text(&initial))? else {
-        app.status = Some(" コメントは空だったので破棄しました ".into());
+        app.status = Some(" the comment was empty, so it was discarded ".into());
         return Ok(());
     };
 
@@ -389,7 +388,7 @@ fn delete_comment_on_cursor(app: &mut App) -> Result<()> {
         _ => match app.cursor_target() {
             Some(t) => t,
             None => {
-                app.status = Some(" 削除するコメントがありません ".into());
+                app.status = Some(" no comment here to delete ".into());
                 return Ok(());
             }
         },
@@ -410,9 +409,9 @@ fn edit_review_body(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
     app.draft.body = body;
     review::save(&review::state_dir(), &app.draft)?;
     app.status = Some(if app.draft.body.is_empty() {
-        " 全体コメントを空にしました ".into()
+        " cleared the review summary ".into()
     } else {
-        " 全体コメントを更新しました ".into()
+        " updated the review summary ".into()
     });
     Ok(())
 }

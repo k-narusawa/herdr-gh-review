@@ -16,7 +16,7 @@ pub enum Row {
         hunk_idx: usize,
         line_idx: usize,
     },
-    /// split表示の1行。左右のセルはハンク内の行番号、対応する行が無ければ`None`
+    /// One row of split view. Each cell holds an index into the hunk, `None` if that side is empty
     Pair {
         file_idx: usize,
         hunk_idx: usize,
@@ -33,7 +33,7 @@ pub enum Row {
 
 pub struct App {
     pub diff: ParsedDiff,
-    /// deltaが色付けした生diffの各行。deltaが使えなければ `None`
+    /// The raw diff colored by delta, line for line. `None` when delta is unavailable
     pub colored: Option<Vec<String>>,
     pub draft: Draft,
     pub collapsed: HashSet<usize>,
@@ -41,10 +41,10 @@ pub struct App {
     pub cursor: usize,
     pub scroll: usize,
     pub show_tree: bool,
-    /// 左のファイルツリーのスクロール位置
+    /// Scroll position of the file tree on the left
     pub tree_scroll: usize,
     pub split: bool,
-    /// split表示でカーソルが優先して指すセル
+    /// The cell the cursor prefers in split view
     pub cursor_side: Side,
     pub status: Option<String>,
 }
@@ -75,7 +75,7 @@ impl App {
         self.rebuild_rows();
     }
 
-    /// deltaが色付けした行。行番号カラムの右に、マーカーごとそのまま出す
+    /// A delta-colored line, printed as-is with its marker, right of the line-number column
     pub fn colored_line(&self, raw_idx: usize) -> Option<&str> {
         Some(self.colored.as_ref()?.get(raw_idx)?.as_str())
     }
@@ -92,7 +92,7 @@ impl App {
                 if self.split {
                     for (left, right) in pair_lines(&hunk.lines) {
                         rows.push(Row::Pair { file_idx, hunk_idx, left, right });
-                        // 文脈行は左右が同じ行なので、コメントは一度だけ出す
+                        // A context line is the same line on both sides — show its comment once
                         let cells = [left, if left == right { None } else { right }];
                         for line_idx in cells.into_iter().flatten() {
                             self.push_comments(&mut rows, file, &hunk.lines[line_idx]);
@@ -147,7 +147,7 @@ impl App {
         }
     }
 
-    /// Pair行でカーソルが実際に指すセル。優先サイドが空なら反対側に落ちる
+    /// The cell the cursor really lands on in a Pair row, falling to the other side if empty
     pub fn active_side(&self, left: Option<usize>, right: Option<usize>) -> Side {
         let (preferred, other) = match self.cursor_side {
             Side::Left => (left, right),
@@ -231,7 +231,7 @@ impl App {
         file.comment_target(line)
     }
 
-    /// 現在のdiffに一致する行が無い下書きコメント。PRに新しいコミットが積まれると発生する
+    /// Draft comments whose line is gone from the current diff, as new commits on the PR do
     pub fn stale_comments(&self) -> usize {
         self.draft
             .comments
@@ -240,21 +240,21 @@ impl App {
             .count()
     }
 
-    /// GitHubに送る下書き。現在のdiffに無い行を含めるとレビュー全体が422で拒否されるので落とす
+    /// The draft as GitHub gets it. One line outside the diff would 422 the whole review
     pub fn submittable_draft(&self) -> Draft {
         let mut draft = self.draft.clone();
         draft.comments.retain(|c| is_on_diff(&self.diff, c));
         draft
     }
 
-    /// 提出できたコメントだけを下書きから消す。残った件数を返す
+    /// Drop the comments that were submitted, returning how many were left behind
     pub fn retain_stale_comments(&mut self) -> usize {
         let diff = &self.diff;
         self.draft.comments.retain(|c| !is_on_diff(diff, c));
         self.draft.comments.len()
     }
 
-    /// 現在のdiffに無いコメントを捨てる。捨てた件数を返す
+    /// Throw away the comments that are no longer in the diff, returning how many went
     pub fn discard_stale_comments(&mut self) -> usize {
         let before = self.draft.comments.len();
         let diff = &self.diff;
@@ -275,8 +275,8 @@ fn is_on_diff(diff: &crate::diff::ParsedDiff, comment: &DraftComment) -> bool {
     })
 }
 
-/// 削除行と追加行を左右に対応付ける。数が合わない分は空セル(`None`)になる。
-/// 文脈行で必ず区切るので、対応付けは1つの変更ブロックの中で閉じる
+/// Pair removed lines with added ones. Whatever does not pair up gets an empty cell (`None`).
+/// Context lines always break the run, so pairing stays inside a single block of change
 fn pair_lines(lines: &[DiffLine]) -> Vec<(Option<usize>, Option<usize>)> {
     let mut out = Vec::new();
     let mut removed: Vec<usize> = Vec::new();
@@ -358,18 +358,18 @@ diff --git a/b.rs b/b.rs
         let mut a = app();
         a.draft.upsert_comment(
             CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
-            "一行目\n二行目".into(),
+            "first line\nsecond line".into(),
         );
         a.rebuild_rows();
-        // rows[2]="-one" rows[3]="+ONE"(a.rs:1 RIGHT) の直後にコメント2行
+        // rows[2]="-one", rows[3]="+ONE" (a.rs:1 RIGHT), then the two comment lines
         let Row::Comment { ref body_line, .. } = a.rows[4] else {
             panic!("expected a comment row, got {:?}", a.rows[4]);
         };
-        assert_eq!(body_line, "一行目");
+        assert_eq!(body_line, "first line");
         let Row::Comment { ref body_line, .. } = a.rows[5] else {
             panic!("expected a comment row");
         };
-        assert_eq!(body_line, "二行目");
+        assert_eq!(body_line, "second line");
     }
 
     #[test]
@@ -403,16 +403,16 @@ diff --git a/b.rs b/b.rs
         assert_eq!(t.side, Side::Right);
     }
 
-    /// 生きたコメント1件と、PR更新で行が消えたコメント1件を持つApp
+    /// One live comment, and one on a line a PR update took away
     fn app_with_a_stale_comment() -> App {
         let mut a = app();
         a.draft.upsert_comment(
             CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
-            "見えているコメント".into(),
+            "on a line that is still here".into(),
         );
         a.draft.upsert_comment(
             CommentTarget { path: "a.rs".into(), line: 999, side: Side::Right },
-            "PRが更新されて消えた行のコメント".into(),
+            "on a line the PR update removed".into(),
         );
         a.rebuild_rows();
         a
@@ -423,7 +423,7 @@ diff --git a/b.rs b/b.rs
         let mut a = app();
         a.draft.upsert_comment(
             CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
-            "見えているコメント".into(),
+            "a visible comment".into(),
         );
         a.rebuild_rows();
         assert_eq!(a.stale_comments(), 0);
@@ -433,18 +433,18 @@ diff --git a/b.rs b/b.rs
     fn comment_on_a_vanished_line_is_reported_as_stale() {
         let a = app_with_a_stale_comment();
         assert_eq!(a.stale_comments(), 1);
-        // 消えた行のコメントは画面に出ない = 気付けないまま提出されるのが罠の本体
+        // A comment on a vanished line never renders — being submitted unseen is the trap
         assert_eq!(a.rows.iter().filter(|r| matches!(r, Row::Comment { .. })).count(), 1);
     }
 
-    /// これが 422 を防いでいる本体。送るのは今のdiffに在る行だけ
+    /// This is what keeps the 422 away: only lines that are in the diff go out
     #[test]
     fn submittable_draft_leaves_stale_comments_behind() {
         let a = app_with_a_stale_comment();
         let sent = a.submittable_draft();
         assert_eq!(sent.comments.len(), 1);
         assert_eq!(sent.comments[0].line, 1);
-        // 下書き本体は削られない
+        // the draft itself is untouched
         assert_eq!(a.draft.comments.len(), 2);
     }
 
@@ -489,7 +489,7 @@ diff --git a/a.rs b/a.rs
 
     #[test]
     fn extra_removed_line_gets_an_empty_right_cell() {
-        // -one/-two と +ONE は3行ではなく2行に畳まれ、余った削除行の右が空く
+        // -one/-two and +ONE fold into 2 rows, not 3; the leftover removed line has an empty right
         let p = pairs(UNEVEN);
         assert_eq!(p[1], (Some(1), Some(3)));
         assert_eq!(p[2], (Some(2), None));
@@ -502,7 +502,7 @@ diff --git a/a.rs b/a.rs
         a.toggle_split();
         assert!(a.rows.iter().all(|r| !matches!(r, Row::Line { .. })));
         assert!(a.rows.iter().any(|r| matches!(r, Row::Pair { .. })));
-        // トグルしても今いるファイルの位置に戻る
+        // toggling lands back on the file you were in
         assert!(matches!(a.rows[a.cursor], Row::FileHeader { file_idx: 0 }));
     }
 
@@ -513,18 +513,18 @@ diff --git a/a.rs b/a.rs
         // rows: FileHeader, HunkHeader, (keep,keep), (-one,+ONE), (-two,None), (tail,tail)
         a.cursor = 3;
         assert_eq!(a.cursor_target().unwrap().side, Side::Right);
-        assert_eq!(a.cursor_target().unwrap().line, 2); // +ONE は new:2
+        assert_eq!(a.cursor_target().unwrap().line, 2); // +ONE is new:2
 
         a.cursor_side = Side::Left;
         assert_eq!(a.cursor_target().unwrap().side, Side::Left);
-        assert_eq!(a.cursor_target().unwrap().line, 2); // -one は old:2
+        assert_eq!(a.cursor_target().unwrap().line, 2); // -one is old:2
     }
 
     #[test]
     fn cursor_falls_back_when_the_preferred_cell_is_empty() {
         let mut a = App::new(UNEVEN, crate::review::Draft::new("o/r", 1, "sha"));
         a.toggle_split();
-        a.cursor = 4; // (-two, なし)
+        a.cursor = 4; // (-two, none)
         assert_eq!(a.cursor_target().unwrap().side, Side::Left);
         assert_eq!(a.cursor_target().unwrap().line, 3);
     }
@@ -534,7 +534,7 @@ diff --git a/a.rs b/a.rs
         let mut a = App::new(UNEVEN, crate::review::Draft::new("o/r", 1, "sha"));
         a.draft.upsert_comment(
             CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
-            "keep行へのコメント".into(),
+            "a comment on the keep line".into(),
         );
         a.toggle_split();
         assert_eq!(
@@ -551,7 +551,7 @@ diff --git a/a.rs b/a.rs
         );
         assert!(a.rows.is_empty());
 
-        // どれも落ちないことがこのテストの主張
+        // the claim of this test is that none of these panic
         a.move_cursor(1);
         a.move_cursor(-1);
         a.next_file();

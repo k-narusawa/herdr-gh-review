@@ -35,7 +35,7 @@ fn render_header(pr: &PrDetail, frame: &mut Frame, area: Rect) {
 fn render_status(app: &App, frame: &mut Frame, area: Rect) {
     let text = app.status.clone().unwrap_or_else(|| {
         format!(
-            " j/k:移動 }}:次ファイル s:{} c:コメント S:提出 q:戻る ?:ヘルプ    comments: {} ",
+            " j/k:move }}:next file s:{} c:comment S:submit q:back ?:help    comments: {} ",
             if app.split { "unified" } else { "split" },
             app.draft.comments.len()
         )
@@ -73,7 +73,7 @@ fn render_diff(app: &mut App, frame: &mut Frame, area: Rect) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
-/// カーソルが画面外に出ないところまでだけスクロールを動かす
+/// Scroll only as far as it takes to keep the cursor on screen
 pub(super) fn clamp_scroll(scroll: usize, cursor: usize, height: usize) -> usize {
     if height == 0 {
         return 0;
@@ -88,7 +88,7 @@ pub(super) fn clamp_scroll(scroll: usize, cursor: usize, height: usize) -> usize
 }
 
 fn row_to_line<'a>(app: &'a App, row: &'a Row, is_cursor: bool, width: usize) -> Line<'a> {
-    // Pair行だけはセル単位で反転させたいので、共通の行末処理より先に返す
+    // A Pair row reverses one cell, not the whole row, so it returns before the shared tail
     if let Row::Pair { file_idx, hunk_idx, left, right } = *row {
         let hunk = &app.diff.files[file_idx].hunks[hunk_idx];
         return pair_to_line(app, hunk, left, right, is_cursor, width);
@@ -123,7 +123,7 @@ fn row_to_line<'a>(app: &'a App, row: &'a Row, is_cursor: bool, width: usize) ->
             let line = &app.diff.files[*file_idx].hunks[*hunk_idx].lines[*line_idx];
             Line::from(line_spans(app, line, line.new_lineno.or(line.old_lineno)))
         }
-        Row::Pair { .. } => unreachable!("上で返している"),
+        Row::Pair { .. } => unreachable!("returned above"),
         Row::Comment { body_line, .. } => Line::from(Span::styled(
             format!("      💬 {body_line}"),
             Style::default().fg(Color::Yellow),
@@ -162,8 +162,9 @@ fn line_spans<'a>(app: &'a App, line: &'a DiffLine, number: Option<u32>) -> Vec<
     spans.into_iter().map(expand_tabs).collect()
 }
 
-/// タブはratatuiの幅計算と実際の描画セル数が食い違い、split表示の区切りがずれる。
-/// ponytail: タブストップではなく固定4桁。行頭インデントしか含まないコードでは同じ見た目になる
+/// ratatui's width calculation and the cells actually drawn disagree on tabs, which shifts the
+/// split separator out of line.
+/// ponytail: a flat 4 columns, not real tab stops. Identical for code that only indents with them
 fn expand_tabs(span: Span<'_>) -> Span<'_> {
     if !span.content.contains('\t') {
         return span;
@@ -219,7 +220,7 @@ fn cell_spans<'a>(
     fit_spans(line_spans(app, line, number), width)
 }
 
-/// スパン列をちょうど`width`桁に切り詰め、足りなければ空白で埋める
+/// Cut the spans down to exactly `width` columns, padding with spaces if they fall short
 fn fit_spans(spans: Vec<Span<'_>>, width: usize) -> Vec<Span<'_>> {
     let mut out: Vec<Span> = Vec::new();
     let mut used = 0usize;
@@ -247,7 +248,7 @@ fn fit_spans(spans: Vec<Span<'_>>, width: usize) -> Vec<Span<'_>> {
     out
 }
 
-/// ANSI付きの1行をratatuiのスパンに変換する。壊れていたら`None`（自前の色に落ちる）
+/// Turn one ANSI line into ratatui spans. `None` if it is malformed, falling back to our colors
 fn ansi_spans(raw: &str) -> Option<Vec<Span<'static>>> {
     let text = raw.as_bytes().into_text().ok()?;
     Some(text.lines.into_iter().next()?.spans)
@@ -337,7 +338,7 @@ diff --git a/a.rs b/a.rs
 
     fn pair_line(app: &App, row_idx: usize, width: usize) -> Line<'_> {
         let Row::Pair { file_idx, hunk_idx, left, right } = app.rows[row_idx] else {
-            panic!("Pair行ではない: {:?}", app.rows[row_idx]);
+            panic!("not a Pair row: {:?}", app.rows[row_idx]);
         };
         let hunk = &app.diff.files[file_idx].hunks[hunk_idx];
         pair_to_line(app, hunk, left, right, false, width)
@@ -355,25 +356,25 @@ diff --git a/a.rs b/a.rs
     fn a_pair_row_shows_both_sides_with_their_own_line_numbers() {
         let app = split_app();
         let text = pair_line(&app, 2, 60).to_string();
-        let (left, right) = text.split_once('│').expect("区切りが無い");
-        assert!(left.contains("-one"), "左が削除行でない: {left:?}");
-        assert!(left.trim_start().starts_with('1'), "左の行番号が old でない: {left:?}");
-        assert!(right.contains("+ONE"), "右が追加行でない: {right:?}");
-        assert!(right.trim_start().starts_with('1'), "右の行番号が new でない: {right:?}");
+        let (left, right) = text.split_once('│').expect("no separator");
+        assert!(left.contains("-one"), "left is not the removed line: {left:?}");
+        assert!(left.trim_start().starts_with('1'), "left number is not the old one: {left:?}");
+        assert!(right.contains("+ONE"), "right is not the added line: {right:?}");
+        assert!(right.trim_start().starts_with('1'), "right number is not the new one: {right:?}");
     }
 
     #[test]
     fn an_empty_cell_still_takes_its_column() {
         let app = split_app();
-        // 2つ目のペアは (-two, なし)
+        // the second pair is (-two, none)
         let text = pair_line(&app, 3, 60).to_string();
-        let (left, right) = text.split_once('│').expect("区切りが無い");
+        let (left, right) = text.split_once('│').expect("no separator");
         assert!(left.contains("-two"));
-        assert!(right.trim().is_empty(), "右セルが空でない: {right:?}");
+        assert!(right.trim().is_empty(), "right cell is not empty: {right:?}");
     }
 
-    /// タブとCJKは幅計算と実際の描画セル数がずれやすい。区切りが1桁でも動くと
-    /// 縦線が途切れて読めなくなるので、実際に描いた結果で見る
+    /// Tabs and CJK are where the width calculation and the cells drawn drift apart. One column
+    /// of drift breaks the vertical line, so assert against what was actually rendered
     #[test]
     fn the_separator_stays_in_one_column() {
         use ratatui::Terminal;
@@ -384,7 +385,7 @@ diff --git a/ai.go b/ai.go
 --- a/ai.go
 +++ b/ai.go
 @@ -1,4 +1,4 @@
- // Command は内容を一時ファイルに書く
+ // Command writes 内容 to a temp file — CJK on purpose, see above
 -func Command(aiCmd string) (*exec.Cmd, error) {
 +func Command(aiCmd string) (*exec.Cmd, string, error) {
  \treturn command(aiCmd)
@@ -409,10 +410,10 @@ diff --git a/ai.go b/ai.go
             .filter(|cols: &Vec<u16>| !cols.is_empty())
             .collect();
 
-        assert!(columns.len() >= 4, "Pair行が描かれていない: {columns:?}");
+        assert!(columns.len() >= 4, "no Pair rows were drawn: {columns:?}");
         assert!(
             columns.iter().all(|c| c == &columns[0]),
-            "区切りの桁がそろっていない: {columns:?}"
+            "the separator column is not aligned: {columns:?}"
         );
     }
 }

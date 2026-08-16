@@ -5,26 +5,26 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 const KEYS: &[(&str, &str)] = &[
-    ("j / k", "移動"),
-    ("Ctrl-d / Ctrl-u", "半画面移動"),
-    ("g / G", "先頭 / 末尾"),
-    ("} / {", "次 / 前のファイル"),
-    ("Tab", "ファイルの折りたたみ"),
-    ("T", "ファイルツリーの表示切替"),
-    ("s", "split / unified の切替"),
-    ("h / l", "split時のカーソル左右"),
-    ("c", "カーソル行にコメント"),
-    ("d", "コメントを削除"),
-    ("D", "現在のdiffに無いコメントを破棄"),
-    ("e", "レビュー全体コメントを編集"),
-    ("S", "提出"),
-    ("o", "ブラウザで開く"),
-    ("r", "再読み込み"),
-    ("q", "戻る"),
+    ("j / k", "move"),
+    ("Ctrl-d / Ctrl-u", "half-page move"),
+    ("g / G", "top / bottom"),
+    ("} / {", "next / previous file"),
+    ("Tab", "collapse a file"),
+    ("T", "toggle the file tree"),
+    ("s", "toggle split / unified"),
+    ("h / l", "move between cells in split view"),
+    ("c", "comment on the line under the cursor"),
+    ("d", "delete a comment"),
+    ("D", "discard comments no longer in the diff"),
+    ("e", "edit the review summary"),
+    ("S", "submit"),
+    ("o", "open in a browser"),
+    ("r", "reload"),
+    ("q", "back"),
 ];
 
 pub fn render(frame: &mut Frame) {
-    let [area] = Layout::horizontal([Constraint::Length(48)])
+    let [area] = Layout::horizontal([Constraint::Length(52)])
         .flex(Flex::Center)
         .areas(frame.area());
     let [area] = Layout::vertical([Constraint::Length(KEYS.len() as u16 + 4)])
@@ -38,7 +38,7 @@ pub fn render(frame: &mut Frame) {
         .map(|(key, desc)| Line::from(format!("  {key:<18}{desc}")))
         .collect();
     lines.push(Line::from(""));
-    lines.push(Line::from("  何かキーを押すと戻ります").style(Style::default().fg(Color::DarkGray)));
+    lines.push(Line::from("  press any key to go back").style(Style::default().fg(Color::DarkGray)));
 
     frame.render_widget(
         Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Keys ")),

@@ -29,7 +29,7 @@ pub struct DiffLine {
     pub old_lineno: Option<u32>,
     pub new_lineno: Option<u32>,
     pub text: String,
-    /// 生diffの何行目か。deltaが色付けした行と突き合わせるためだけに持つ
+    /// Index into the raw diff, kept only to line up with delta's colored output
     pub raw_idx: usize,
 }
 
@@ -157,7 +157,7 @@ fn parse_file(lines: Vec<(usize, &str)>) -> FileDiff {
             continue;
         }
 
-        // "\ No newline at end of file" は直前の行の属性であって、行そのものではない
+        // "\ No newline at end of file" is a property of the line above, not a line of its own
         if line.starts_with('\\') {
             continue;
         }
@@ -166,9 +166,9 @@ fn parse_file(lines: Vec<(usize, &str)>) -> FileDiff {
             Some('+') => (LineKind::Added, &line[1..]),
             Some('-') => (LineKind::Removed, &line[1..]),
             Some(' ') => (LineKind::Context, &line[1..]),
-            // ponytail: 先頭マーカーの無い行はハンク終端とみなす。git/GitHub のどちらも
-            // 空の文脈行を " " として出すため実際には踏まないが、マーカーを落とす
-            // 実装に当たった場合は行番号がずれるより打ち切る方が安全
+            // ponytail: a line with no leading marker ends the hunk. Both git and GitHub emit an
+            // empty context line as " ", so this never fires in practice — but against an
+            // implementation that drops the marker, stopping beats shifting every line number
             _ => {
                 in_hunk = false;
                 read_header_line(&mut file, line);
@@ -206,7 +206,7 @@ fn parse_file(lines: Vec<(usize, &str)>) -> FileDiff {
 
 fn read_header_line(file: &mut FileDiff, line: &str) {
     if let Some(rest) = line.strip_prefix("diff --git ") {
-        // ponytail: パスに " b/" を含むと誤分割する。実害が出たら --- / +++ 行のみを信頼する形に戻す
+        // ponytail: a path containing " b/" splits wrong. If that ever bites, trust only --- / +++
         if let Some((a, b)) = rest.split_once(" b/") {
             file.old_path = Some(a.strip_prefix("a/").unwrap_or(a).to_string());
             file.new_path = Some(b.to_string());
@@ -236,7 +236,7 @@ fn header_path(raw: &str) -> Option<String> {
     Some(path.to_string())
 }
 
-/// `@@ -10,6 +10,7 @@ fn login() {` から、各サイドの「1行目の1つ前」の番号を返す
+/// From `@@ -10,6 +10,7 @@ fn login() {`, the number just before each side's first line
 fn parse_hunk_header(line: &str) -> (u32, u32) {
     let body = line.trim_start_matches('@').trim();
     let body = body.split("@@").next().unwrap_or("");
@@ -307,7 +307,7 @@ index 1111111..2222222 100644
         // "+    return Err(Unauthorized);"
         assert_eq!(lines[3].new_lineno, Some(12));
 
-        // " }" — 削除1行・追加2行のあとの文脈行
+        // " }" — the context line after 1 removal and 2 additions
         assert_eq!(lines[4].kind, LineKind::Context);
         assert_eq!(lines[4].old_lineno, Some(12));
         assert_eq!(lines[4].new_lineno, Some(13));
@@ -516,7 +516,7 @@ diff --git a/a.txt b/a.txt
     fn raw_idx_keeps_counting_across_files() {
         let d = parse(MULTI);
         let src: Vec<&str> = MULTI.lines().collect();
-        let deleted = &d.files[1].hunks[0].lines[0]; // 2ファイル目の "-fn removed() {}"
+        let deleted = &d.files[1].hunks[0].lines[0]; // "-fn removed() {}" in the second file
         assert_eq!(src[deleted.raw_idx], "-fn removed() {}");
     }
 }

@@ -8,7 +8,7 @@ description = "Review GitHub pull requests in a herdr pane."
 [[build]]
 command = ["bash", "herdr/install.sh"]
 
-# ペインのcwdはレビュー対象のリポジトリであってプラグインルートではないため、絶対パスで起動する
+# The pane's cwd is the repository under review, not the plugin root, so launch by absolute path
 [[panes]]
 id = "pane"
 title = "gh-review"

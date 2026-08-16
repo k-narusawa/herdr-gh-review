@@ -108,7 +108,7 @@ pub fn parse_pr_detail(json: &str) -> Result<PrDetail> {
     let r: RawPrView = serde_json::from_str(json)?;
     let repo = repo_from_url(&r.url)
         .map(|(repo, _)| repo)
-        .ok_or_else(|| anyhow!("PRのURLからリポジトリを特定できません: {}", r.url))?;
+        .ok_or_else(|| anyhow!("cannot tell the repository from the PR URL: {}", r.url))?;
     Ok(PrDetail {
         repo,
         number: r.number,
@@ -148,11 +148,11 @@ pub struct Gh {
 impl Gh {
     pub fn new() -> Result<Self> {
         let bin = find_gh().ok_or_else(|| {
-            anyhow!("gh コマンドが見つかりません。https://cli.github.com/ からインストールしてください")
+            anyhow!("gh was not found — install it from https://cli.github.com/")
         })?;
         let gh = Self { bin };
         gh.run(&["auth", "status"])
-            .context("GitHubにログインしていません。`gh auth login` を実行してください")?;
+            .context("not logged in to GitHub — run `gh auth login`")?;
         Ok(gh)
     }
 
@@ -160,10 +160,10 @@ impl Gh {
         let out = Command::new(&self.bin)
             .args(args)
             .output()
-            .with_context(|| format!("gh {} の起動に失敗しました", args.join(" ")))?;
+            .with_context(|| format!("could not run gh {}", args.join(" ")))?;
         if !out.status.success() {
             bail!(
-                "gh {} が失敗しました: {}",
+                "gh {} failed: {}",
                 args.join(" "),
                 String::from_utf8_lossy(&out.stderr).trim()
             );
@@ -228,7 +228,7 @@ impl Gh {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .context("gh api の起動に失敗しました")?;
+            .context("could not run gh api")?;
 
         child
             .stdin
@@ -239,7 +239,7 @@ impl Gh {
         let out = child.wait_with_output()?;
         if !out.status.success() {
             bail!(
-                "レビューの提出に失敗しました: {}",
+                "the review could not be submitted: {}",
                 String::from_utf8_lossy(&out.stderr).trim()
             );
         }
@@ -247,7 +247,7 @@ impl Gh {
     }
 }
 
-/// ステータス行には1行しか出せないので、原因の全文はここに残す
+/// The status bar fits one line, so the full cause goes here
 pub fn log_error(error: &anyhow::Error) {
     let path = crate::review::state_dir().join("log");
     let Some(parent) = path.parent() else {
@@ -260,8 +260,8 @@ pub fn log_error(error: &anyhow::Error) {
     let _ = writeln!(file, "{error:?}");
 }
 
-/// herdr はプラグインに最小限の PATH しか渡さないため、よくある置き場も探す。
-/// 環境変数の書き換え（edition 2024 では unsafe）を避けるため、絶対パスを解決して使う
+/// herdr hands plugins a minimal PATH, so look in the usual places too.
+/// Resolve an absolute path rather than rewriting env vars, which is unsafe in edition 2024
 fn find_gh() -> Option<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
     let path_var = std::env::var("PATH").unwrap_or_default();
@@ -270,7 +270,7 @@ fn find_gh() -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// PATH の空要素はカレントディレクトリを意味してしまうので落とす
+/// An empty PATH entry means the current directory, so drop those
 fn gh_candidates(path_var: &str, home: &str) -> Vec<PathBuf> {
     let extra = [
         "/opt/homebrew/bin".to_string(),
@@ -324,7 +324,7 @@ mod tests {
         assert_eq!(prs[0].repo.as_deref(), Some("rue-language/rue"));
         assert_eq!(prs[0].number, 2413);
         assert_eq!(prs[0].author, "steveklabnik");
-        // search API は増減行数を返さない
+        // the search API does not return line counts
         assert_eq!(prs[0].additions, None);
     }
 
@@ -341,7 +341,7 @@ mod tests {
         let candidates = gh_candidates("/usr/bin::/bin:", "/home/x");
         assert!(
             !candidates.iter().any(|p| p == std::path::Path::new("gh")),
-            "相対パスの gh が候補に混じっている: {candidates:?}"
+            "a relative gh path slipped into the candidates: {candidates:?}"
         );
         assert!(candidates.contains(&PathBuf::from("/usr/bin/gh")));
         assert!(candidates.contains(&PathBuf::from("/bin/gh")));

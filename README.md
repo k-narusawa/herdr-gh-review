@@ -1,16 +1,25 @@
 # herdr-gh-review
 
-GitHubのPull Requestを [herdr](https://herdr.dev) のペイン内でレビューするプラグイン。
-diffを読み、行コメントを書き、レビューとして提出するところまでをターミナルで完結させる。
+Review GitHub pull requests in a [herdr](https://herdr.dev) pane, and **submit a real review to
+GitHub** — line comments, a summary, Approve or Request changes. Read the diff, write the notes,
+send it. You never leave the terminal.
 
-## 必要なもの
+Other herdr review panes point at your agent's diff and hand the notes back to the agent.
+This one points at a pull request and posts to GitHub.
 
-- herdr 0.7.5 以上
-- [gh](https://cli.github.com/) 2.x（`gh auth login` 済みであること）
-- Rust 1.85 以上（edition 2024）。開発は `mise.toml` で 1.97.1 に固定
-- [delta](https://github.com/dandavison/delta)（任意）。PATHにあればdiffに構文ハイライトと語単位の強調が付く。gitconfigの `[delta]` 設定（テーマ等）をそのまま使う。無ければ従来の +/- 色で表示する
+It also answers the question you actually start from — *what am I supposed to review?* — with
+cross-repository lists of the PRs waiting on you and the PRs you opened.
 
-## インストール
+## Requirements
+
+- herdr 0.7.5 or newer
+- [gh](https://cli.github.com/) 2.x, already authenticated (`gh auth login`)
+- Rust 1.85 or newer (edition 2024). Development pins 1.97.1 via `mise.toml`
+- [delta](https://github.com/dandavison/delta) (optional). If it is on `PATH`, diffs get syntax
+  highlighting and word-level emphasis, using the `[delta]` section of your gitconfig as-is.
+  Without it, diffs fall back to plain +/- colors
+
+## Install
 
 ```bash
 git clone https://github.com/k-narusawa/herdr-gh-review
@@ -18,65 +27,70 @@ herdr plugin link ./herdr-gh-review
 bash ./herdr-gh-review/herdr/install.sh
 ```
 
-## 開発
+## Usage
 
-linkは一度だけでよい。`unlink` → `link` は不要。
-
-| 変えたもの | やること |
+| Action | What it opens |
 |---|---|
-| `src/**.rs` | `bash herdr/install.sh` してペインを開き直す |
-| `herdr/*.sh` | そのまま次の起動から反映される |
-| `herdr-plugin.toml` | `herdr plugin link .`（登録済みでも上書きされる） |
+| `gh-review: open PR list` | Open PRs in the current repository |
+| `gh-review: PRs awaiting my review` | PRs that requested your review, across repositories |
+| `gh-review: my open PRs` | PRs you opened, across repositories — for reviewing yourself first |
+| Click a PR URL | That pull request, directly |
 
-ペインは毎回 `bin/herdr-gh-review` を新しく exec するので、バイナリを差し替えれば次の起動から新しい方が動く。
-`herdr-plugin.toml` だけは link 時に `~/.config/herdr/plugins.json` へ写しが作られるため、再linkが要る。
+Only `open PR list` looks at the current repository's remote; the others work from anywhere.
 
-## 使い方
+To launch it by hand, pass `--review-requested`, `--authored`, `--pr <number>`, or `--url <url>`.
 
-| アクション | 内容 |
+A tree of the changed files sits to the left of the diff. The file under the cursor is
+highlighted and follows you as you move with `}` / `{`. `T` toggles the tree, and terminals
+narrower than 80 columns drop it automatically in favor of the diff.
+
+`s` switches the diff between unified (one column) and split (old on the left, new on the right).
+In split view, removed and added lines sit at the same height and a line that exists on only one
+side leaves the other blank. Comments attach to the line in the cell under the cursor, so use
+`h` / `l` to choose which side you are aiming at.
+
+### Keys
+
+| Key | Action |
 |---|---|
-| `gh-review: open PR list` | カレントリポジトリのopen PR一覧 |
-| `gh-review: PRs awaiting my review` | 自分がレビューを依頼されているPR（リポジトリ横断） |
-| `gh-review: my open PRs` | 自分が作成したPR（リポジトリ横断）。人に見せる前の自己レビュー用 |
-| PR URLをクリック | そのPRを直接開く |
+| `j` / `k` | Move |
+| `Ctrl-d` / `Ctrl-u` | Half-page move |
+| `g` / `G` | Top / bottom |
+| `}` / `{` | Next / previous file |
+| `Tab` | Collapse a file |
+| `T` | Toggle the file tree |
+| `s` | Toggle split / unified |
+| `h` / `l` | Move the cursor between cells in split view |
+| `c` | Comment on the line under the cursor (opens `$EDITOR`) |
+| `d` | Delete a comment |
+| `D` | Discard comments that are no longer in the diff |
+| `e` | Edit the review summary |
+| `S` | Submit (Comment / Approve / Request changes) |
+| `o` | Open the PR in a browser |
+| `r` | Reload |
+| `?` | Show the keys |
+| `q` | Back / quit |
 
-カレントリポジトリのリモートを見るのは `open PR list` だけで、他はどこから起動しても動く。
-手で起動する場合は `--review-requested` / `--authored` / `--pr <番号>` / `--url <URL>` を渡す。
+Reviews in progress are saved automatically, and cleared only once a submit succeeds.
 
-diff画面の左には変更ファイルのツリーが出る。カーソルのいるファイルが反転表示され、`}` / `{` で移動すると追従する。
-`T` で表示/非表示を切り替えられる。端末幅が80桁未満のときはdiff本体を優先して自動的に出さない。
+## When the PR gets new commits
 
-diffは `s` で unified（1列）と split（左に変更前・右に変更後）を切り替えられる。
-splitでは削除行と追加行が同じ高さに並び、片側にしか無い行は反対側が空欄になる。
-コメントはカーソルのあるセルの行に付くので、`h` / `l` でどちらの側を狙うか切り替える。
+New commits change the diff, so some of the lines you commented on may no longer be in it.
+When that happens the count appears in the status bar and in the submit dialog.
 
-### キー操作
+Those comments are not sent — the rest of the review goes through as usual. They stay in the
+draft so you can rewrite them, and `D` discards them once you no longer need them.
 
-| キー | 動作 |
+## Development
+
+Link once. You do not need to `unlink` and `link` again.
+
+| What changed | What to do |
 |---|---|
-| `j` / `k` | 移動 |
-| `Ctrl-d` / `Ctrl-u` | 半画面移動 |
-| `g` / `G` | 先頭 / 末尾 |
-| `}` / `{` | 次 / 前のファイル |
-| `Tab` | ファイルの折りたたみ |
-| `T` | 左のファイルツリーの表示切替 |
-| `s` | split / unified の切替 |
-| `h` / `l` | split時にカーソルが指すセルを左右に切替 |
-| `c` | カーソル行にコメント（`$EDITOR` が開く） |
-| `d` | コメントを削除 |
-| `e` | レビュー全体コメントを編集 |
-| `S` | 提出（Comment / Approve / Request changes） |
-| `o` | ブラウザでPRを開く |
-| `r` | 再読み込み |
-| `?` | キー一覧を表示 |
-| `q` | 戻る / 終了 |
+| `src/**.rs` | Run `bash herdr/install.sh`, then reopen the pane |
+| `herdr/*.sh` | Nothing — the next launch picks it up |
+| `herdr-plugin.toml` | Run `herdr plugin link .` (it overwrites an existing registration) |
 
-書きかけのレビューは自動保存される。提出に成功したときだけ消える。
-
-## PRが更新されたとき
-
-PRに新しいコミットが積まれると、それ以前に書いた行コメントのうち、対象行が現在の差分に
-存在しなくなったものが出ます。この状態になると画面上部と提出ダイアログに件数が出ます。
-
-提出時、それらは送られません（残りのコメントは通常どおり送られます）。書き直せるように
-下書きには残るので、要らなくなったら `D` で破棄してください。
+Every pane `exec`s a fresh `bin/herdr-gh-review`, so replacing the binary is enough for the next
+launch to run the new one. Only `herdr-plugin.toml` needs a re-link, because linking copies it
+into `~/.config/herdr/plugins.json`.

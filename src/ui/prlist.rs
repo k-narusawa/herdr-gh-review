@@ -26,7 +26,7 @@ pub fn render(prs: &[PrSummary], cursor: usize, title: &str, status: Option<&str
         );
     } else if prs.is_empty() {
         frame.render_widget(
-            Paragraph::new("  該当するPRがありません")
+            Paragraph::new("  no matching pull requests")
                 .style(Style::default().fg(Color::DarkGray)),
             areas[1],
         );
@@ -57,7 +57,7 @@ pub fn render(prs: &[PrSummary], cursor: usize, title: &str, status: Option<&str
     }
 
     frame.render_widget(
-        Paragraph::new(" j/k:移動 Enter:開く r:再読み込み q:終了 ")
+        Paragraph::new(" j/k:move Enter:open r:reload q:quit ")
             .style(Style::default().add_modifier(Modifier::REVERSED)),
         areas[2],
     );

@@ -13,13 +13,13 @@ pub const EVENTS: [ReviewEvent; 3] = [
 
 pub fn render(draft: &Draft, stale: usize, cursor: usize, frame: &mut Frame) {
     let mut lines = vec![Line::from(format!(
-        "  行コメント {} 件 / 全体コメント {}",
+        "  {} line comments / summary: {}",
         draft.comments.len() - stale,
-        if draft.body.trim().is_empty() { "なし" } else { "あり" }
+        if draft.body.trim().is_empty() { "none" } else { "yes" }
     ))];
     if stale > 0 {
         lines.push(Line::from(Span::styled(
-            format!("  ⚠ 現在のdiffに無い {stale} 件は送りません"),
+            format!("  ! {stale} not in the current diff, will not be sent"),
             Style::default().fg(Color::Yellow),
         )));
     }
@@ -35,7 +35,7 @@ pub fn render(draft: &Draft, stale: usize, cursor: usize, frame: &mut Frame) {
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  j/k:選択 Enter:提出 Esc:やめる",
+        "  j/k:select Enter:submit Esc:cancel",
         Style::default().fg(Color::DarkGray),
     )));
 

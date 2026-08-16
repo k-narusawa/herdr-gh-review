@@ -18,7 +18,7 @@ impl Target {
             [flag, value] if flag == "--pr" => {
                 let number = value
                     .parse()
-                    .map_err(|_| anyhow!("PR番号として解釈できません: {value}"))?;
+                    .map_err(|_| anyhow!("not a PR number: {value}"))?;
                 return Ok(Target::Pr { repo: None, number });
             }
             [flag, value] if flag == "--url" => return Self::from_url(value),
@@ -32,14 +32,14 @@ impl Target {
             Some("review-requested") => Ok(Target::ReviewRequested),
             Some("authored") => Ok(Target::Authored),
             Some(value) if value.contains("/pull/") => Self::from_url(value),
-            // 想定外の値で起動を止めるより、既定の一覧を出す方が使う側の損失が小さい
+            // Showing the default list costs the user less than refusing to start on a bad value
             Some(_) => Ok(Target::RepoPrList),
         }
     }
 
     fn from_url(url: &str) -> Result<Self> {
         let (repo, number) =
-            repo_from_url(url).ok_or_else(|| anyhow!("PRのURLとして解釈できません: {url}"))?;
+            repo_from_url(url).ok_or_else(|| anyhow!("not a PR URL: {url}"))?;
         Ok(Target::Pr { repo: Some(repo), number })
     }
 }

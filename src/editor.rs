@@ -10,7 +10,7 @@ fn editor_command(editor: Option<&str>, visual: Option<&str>) -> Vec<String> {
     raw.split_whitespace().map(str::to_string).collect()
 }
 
-/// エディタを開いてテキストを受け取る。空のまま閉じた場合は None を返す
+/// Open an editor and take back the text. `None` if it was closed still empty
 pub fn edit_text(initial: &str) -> Result<Option<String>> {
     let editor = std::env::var("EDITOR").ok();
     let visual = std::env::var("VISUAL").ok();
@@ -20,7 +20,7 @@ pub fn edit_text(initial: &str) -> Result<Option<String>> {
         .prefix("gh-review-comment-")
         .suffix(".md")
         .tempfile()
-        .context("一時ファイルを作れません")?;
+        .context("cannot create a temporary file")?;
     file.write_all(initial.as_bytes())?;
     file.flush()?;
     let path = file.path().to_path_buf();
@@ -29,10 +29,10 @@ pub fn edit_text(initial: &str) -> Result<Option<String>> {
         .args(&cmd[1..])
         .arg(&path)
         .status()
-        .with_context(|| format!("エディタを起動できません: {}", cmd.join(" ")))?;
+        .with_context(|| format!("cannot start the editor: {}", cmd.join(" ")))?;
 
     if !status.success() {
-        bail!("エディタが異常終了しました: {}", cmd.join(" "));
+        bail!("the editor exited abnormally: {}", cmd.join(" "));
     }
 
     let text = std::fs::read_to_string(&path)?;

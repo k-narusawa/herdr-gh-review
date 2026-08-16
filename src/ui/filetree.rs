@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 pub const WIDTH: u16 = 32;
 
-/// これより狭い端末ではdiff本体を優先してツリーを出さない
+/// Narrower terminals drop the tree in favor of the diff itself
 pub const MIN_TERMINAL_WIDTH: u16 = 80;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -17,7 +17,7 @@ enum Node<'a> {
     File { depth: usize, name: &'a str, file_idx: usize },
 }
 
-/// パス順に並べ直して、共通のディレクトリを一度だけ出す
+/// Sort by path so a shared directory is emitted only once
 fn build(diff: &ParsedDiff) -> Vec<Node<'_>> {
     let mut paths: Vec<(&str, usize)> = diff
         .files
@@ -31,7 +31,7 @@ fn build(diff: &ParsedDiff) -> Vec<Node<'_>> {
     let mut prev: Vec<&str> = Vec::new();
     for (path, file_idx) in paths {
         let segments: Vec<&str> = path.split('/').collect();
-        let (name, dirs) = segments.split_last().expect("splitで空にはならない");
+        let (name, dirs) = segments.split_last().expect("split never yields an empty slice");
         let shared = dirs
             .iter()
             .zip(&prev)
@@ -110,7 +110,7 @@ fn span_width(text: &str) -> usize {
     Span::raw(text).width()
 }
 
-/// 右端の`reserved`桁を空けて、長すぎる名前は頭を`…`で潰す
+/// Keep `reserved` columns free on the right; a name too long loses its head to `…`
 fn fit(label: &str, width: usize, reserved: usize) -> String {
     let room = width.saturating_sub(reserved);
     let mut label = label.to_string();
@@ -173,7 +173,7 @@ diff --git a/src/app.rs b/src/app.rs
         let diff = crate::diff::parse(DIFF);
         let nodes = build(&diff);
         let Node::File { file_idx, .. } = nodes[0] else {
-            panic!("README.md がファイルではない");
+            panic!("README.md is not a file node");
         };
         assert_eq!(diff.files[file_idx].display_path(), "README.md");
     }

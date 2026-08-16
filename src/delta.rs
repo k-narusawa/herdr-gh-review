@@ -1,8 +1,9 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-/// 生diffを `delta --color-only` に通し、ANSI付きの行を「入力と1行=1行」で返す。
-/// deltaが無い・失敗した・行数が変わった場合は `None`（呼び出し側は自前の色に落ちる）
+/// Pipe the raw diff through `delta --color-only`, returning ANSI lines one-for-one with the
+/// input. `None` if delta is missing, failed, or changed the line count — the caller then
+/// falls back to its own colors
 pub fn colorize(raw: &str) -> Option<Vec<String>> {
     let mut child = Command::new("delta")
         .args([
@@ -17,7 +18,7 @@ pub fn colorize(raw: &str) -> Option<Vec<String>> {
         .spawn()
         .ok()?;
 
-    // 大きなdiffだとstdoutのパイプが先に詰まるので、書き込みは別スレッドに逃がす
+    // On a large diff the stdout pipe fills first, so the write goes to its own thread
     let mut stdin = child.stdin.take()?;
     let owned = raw.to_string();
     std::thread::spawn(move || stdin.write_all(owned.as_bytes()));
@@ -34,7 +35,7 @@ fn align(raw: &str, colored: &str) -> Option<Vec<String>> {
     (lines.len() == raw.lines().count()).then_some(lines)
 }
 
-/// deltaが行末に付ける「行末まで消去」。ratatuiには不要で、ansi-to-tuiも解釈しない
+/// delta's trailing erase-to-end-of-line. ratatui does not need it and ansi-to-tui ignores it
 fn strip_erase(line: &str) -> String {
     line.replace("\x1b[0K", "").replace("\x1b[K", "")
 }
@@ -61,7 +62,7 @@ mod tests {
         assert_eq!(got[0], "\x1b[32m+x\x1b[0m");
     }
 
-    /// deltaが入っている環境でだけ意味のあるテスト。無ければ`None`で落ちるのが正しい
+    /// Only meaningful where delta is installed; without it, bailing on `None` is correct
     #[test]
     fn colorize_lines_up_with_the_input() {
         const DIFF: &str = "\
@@ -78,9 +79,9 @@ diff --git a/x.rs b/x.rs
             return;
         };
         assert_eq!(lines.len(), DIFF.lines().count());
-        // 語単位の強調でANSIが挟まるので、素の文字列一致ではなく断片で見る
-        assert!(lines[5].contains("let x = "), "削除行がずれている: {:?}", lines[5]);
-        assert!(lines[5].contains('\x1b'), "色が付いていない: {:?}", lines[5]);
-        assert!(lines[3].starts_with("@@"), "ハンクヘッダがずれている: {:?}", lines[3]);
+        // Word-level emphasis injects ANSI mid-line, so match fragments, not whole strings
+        assert!(lines[5].contains("let x = "), "the removed line is off: {:?}", lines[5]);
+        assert!(lines[5].contains('\x1b'), "no color was applied: {:?}", lines[5]);
+        assert!(lines[3].starts_with("@@"), "the hunk header is off: {:?}", lines[3]);
     }
 }

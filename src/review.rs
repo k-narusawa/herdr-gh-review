@@ -92,7 +92,7 @@ impl ReviewEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReviewError {
-    /// REQUEST_CHANGES は本文が必須（GitHubが空本文を拒否する）
+    /// REQUEST_CHANGES needs a body — GitHub rejects an empty one
     BodyRequired,
     Empty,
 }
@@ -100,8 +100,8 @@ pub enum ReviewError {
 impl std::fmt::Display for ReviewError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ReviewError::BodyRequired => write!(f, "Request changes には全体コメントが必要です"),
-            ReviewError::Empty => write!(f, "提出する内容がありません"),
+            ReviewError::BodyRequired => write!(f, "Request changes needs a review summary"),
+            ReviewError::Empty => write!(f, "nothing to submit"),
         }
     }
 }
@@ -145,19 +145,19 @@ pub fn save(state_dir: &Path, draft: &Draft) -> Result<()> {
     let path = draft_path(state_dir, &draft.repo, draft.pr_number);
     let parent = path.parent().expect("draft path has a parent");
     std::fs::create_dir_all(parent)
-        .with_context(|| format!("下書きディレクトリを作れません: {}", path.display()))?;
+        .with_context(|| format!("cannot create the draft directory: {}", path.display()))?;
     let json = serde_json::to_string_pretty(draft)?;
 
-    // 書き込み途中で落ちても、path は完全な旧内容か完全な新内容のどちらかにしかならない
+    // Crash mid-write and `path` still holds either the whole old content or the whole new one
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json)
-        .with_context(|| format!("下書きを書き込めません: {}", tmp.display()))?;
+        .with_context(|| format!("cannot write the draft: {}", tmp.display()))?;
     std::fs::rename(&tmp, &path)
-        .with_context(|| format!("下書きを確定できません: {}", path.display()))
+        .with_context(|| format!("cannot commit the draft: {}", path.display()))
 }
 
-/// 壊れた下書きは無いものとして扱う。読めないファイルのために起動できない方が損失が大きい。
-/// ただし次の save に上書きさせないよう、退避してから諦める
+/// Treat a corrupt draft as absent — refusing to start over an unreadable file costs more.
+/// Move it aside first, so the next save does not overwrite it
 pub fn load(state_dir: &Path, repo: &str, pr_number: u32) -> Result<Option<Draft>> {
     let path = draft_path(state_dir, repo, pr_number);
     let Ok(raw) = std::fs::read_to_string(&path) else {
@@ -177,7 +177,7 @@ pub fn delete(state_dir: &Path, repo: &str, pr_number: u32) -> Result<()> {
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("下書きを削除できません: {}", path.display())),
+        Err(e) => Err(e).with_context(|| format!("cannot delete the draft: {}", path.display())),
     }
 }
 
@@ -190,11 +190,11 @@ mod tests {
         let mut d = Draft::new("k-narusawa/app", 42, "abc123");
         d.upsert_comment(
             CommentTarget { path: "src/auth.rs".into(), line: 11, side: Side::Right },
-            "null時に401を返すべきでは？".into(),
+            "should this return 401 when null?".into(),
         );
         d.upsert_comment(
             CommentTarget { path: "src/auth.rs".into(), line: 11, side: Side::Left },
-            "この分岐は消して良いのか".into(),
+            "is this branch safe to drop?".into(),
         );
         d
     }
@@ -209,8 +209,8 @@ mod tests {
                 "event": "COMMENT",
                 "body": "",
                 "comments": [
-                    { "path": "src/auth.rs", "line": 11, "side": "RIGHT", "body": "null時に401を返すべきでは？" },
-                    { "path": "src/auth.rs", "line": 11, "side": "LEFT", "body": "この分岐は消して良いのか" }
+                    { "path": "src/auth.rs", "line": 11, "side": "RIGHT", "body": "should this return 401 when null?" },
+                    { "path": "src/auth.rs", "line": 11, "side": "LEFT", "body": "is this branch safe to drop?" }
                 ]
             })
         );
@@ -249,11 +249,11 @@ mod tests {
         let mut d = draft_with_two_comments();
         d.upsert_comment(
             CommentTarget { path: "src/auth.rs".into(), line: 11, side: Side::Right },
-            "書き直した".into(),
+            "rewritten".into(),
         );
         assert_eq!(d.comments.len(), 2);
         let t = CommentTarget { path: "src/auth.rs".into(), line: 11, side: Side::Right };
-        assert_eq!(d.comment_at(&t).unwrap().body, "書き直した");
+        assert_eq!(d.comment_at(&t).unwrap().body, "rewritten");
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|x| x == "tmp"))
             .collect();
-        assert!(leftovers.is_empty(), "一時ファイルが残っている: {leftovers:?}");
+        assert!(leftovers.is_empty(), "a temporary file was left behind: {leftovers:?}");
     }
 
     #[test]
@@ -334,8 +334,8 @@ mod tests {
         assert_eq!(load(dir.path(), "k-narusawa/app", 42).unwrap(), None);
 
         let rescued = path.with_extension("json.corrupt");
-        assert!(rescued.exists(), "壊れた下書きが退避されていない");
+        assert!(rescued.exists(), "the corrupt draft was not moved aside");
         assert_eq!(std::fs::read_to_string(&rescued).unwrap(), "{ broken but precious");
-        assert!(!path.exists(), "壊れたファイルが元の場所に残っている");
+        assert!(!path.exists(), "the corrupt file is still in its original place");
     }
 }
