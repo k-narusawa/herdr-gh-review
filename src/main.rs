@@ -441,7 +441,7 @@ fn edit_review_body(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
 /// that the event loop picks up; nothing here waits for it
 fn start_ai_review(app: &mut App, gh: &Gh) {
     match gh.current_repo() {
-        Ok(repo) if repo == app.draft.repo => {}
+        Ok(repo) if repo.eq_ignore_ascii_case(&app.draft.repo) => {}
         Ok(_) => {
             app.status = Some(" AI review works only on the current repository's PRs ".into());
             return;
@@ -459,13 +459,24 @@ fn start_ai_review(app: &mut App, gh: &Gh) {
     };
 
     let out = ai::review_path(&review::state_dir(), &app.draft.repo, app.draft.pr_number);
+
+    // A failure below the spawn (missing ai.sh, missing herdr, a failed pane split, ...) would
+    // otherwise vanish silently, so route it to the same log gh::log_error writes to
+    let state = review::state_dir();
+    let stderr = std::fs::create_dir_all(&state)
+        .and_then(|()| {
+            std::fs::OpenOptions::new().create(true).append(true).open(state.join("log"))
+        })
+        .map(std::process::Stdio::from)
+        .unwrap_or_else(|_| std::process::Stdio::null());
+
     let spawned = std::process::Command::new("bash")
         .arg(format!("{root}/herdr/ai.sh"))
         .arg(&app.draft.repo)
         .arg(app.draft.pr_number.to_string())
         .arg(&out)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(stderr)
         .spawn();
 
     app.status = Some(match spawned {

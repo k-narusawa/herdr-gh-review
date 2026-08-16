@@ -187,7 +187,9 @@ impl Gh {
     }
 
     pub fn current_repo(&self) -> Result<String> {
-        let out = self.run(&["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])?;
+        let out = self.run(&[
+            "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner",
+        ])?;
         Ok(out.trim().to_string())
     }
 

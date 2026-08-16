@@ -14,6 +14,7 @@ lists of the pull requests in this repository that are waiting on you, and the o
 
 - herdr 0.7.5 or newer
 - [gh](https://cli.github.com/) 2.x, already authenticated (`gh auth login`)
+- [jq](https://jqlang.org/), used to parse `herdr pane split`'s output for AI review
 - Rust 1.85 or newer (edition 2024). Development pins 1.97.1 via `mise.toml`
 - [delta](https://github.com/dandavison/delta) (optional). If it is on `PATH`, diffs get syntax
   highlighting and word-level emphasis, using the `[delta]` section of your gitconfig as-is.
@@ -82,7 +83,8 @@ comments in this pane, marked `[AI]`, and you edit, delete, or submit them as yo
 
 The pane stays open, so you can keep talking to the agent about what it found.
 
-Set `GH_REVIEW_AI_CMD` to run something other than `claude`.
+Set `GH_REVIEW_AI_CMD` to run something other than `claude`. It must be a single executable name
+or path — it is not passed through a shell, so it cannot carry extra arguments.
 
 AI review only works on pull requests in the current repository, so a PR opened from a URL
 in another repository cannot use it.
