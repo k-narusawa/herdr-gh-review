@@ -8,7 +8,7 @@ mod review;
 mod target;
 mod ui;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use app::App;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use gh::{Gh, PrDetail, PrSummary};
@@ -188,23 +188,43 @@ fn merge_ai_review(app: &mut App) {
         Ok(None) => return,
         Err(e) => {
             gh::log_error(&e);
-            app.status = Some(format!(" {} ", first_line(&e.to_string())));
+            let corrupt = ai::review_path(&state, &app.draft.repo, app.draft.pr_number)
+                .with_extension("json.corrupt");
+            app.status = Some(format!(
+                " {} (saved to {}) ",
+                first_line(&e.to_string()),
+                corrupt.display()
+            ));
             return;
         }
     };
 
+    let took_summary = app.draft.body.trim().is_empty() && !review.body.trim().is_empty();
     let merged = ai::merge(app, review);
     if let Err(e) = review::save(&state, &app.draft) {
         gh::log_error(&e);
     }
+    if !merged.skipped_targets.is_empty() {
+        gh::log_error(&anyhow!(
+            "AI review: {} comment(s) skipped: {}",
+            merged.skipped_targets.len(),
+            merged.skipped_targets.join(", ")
+        ));
+    }
     app.rebuild_rows();
-    app.status = Some(match merged.skipped {
-        0 => format!(" merged {} AI comments ", merged.added),
-        n => format!(
-            " merged {} AI comments ({n} skipped: not in the diff, or already commented) ",
-            merged.added
-        ),
-    });
+
+    let mut status = format!(" merged {} AI comments", merged.added);
+    if took_summary {
+        status.push_str(" and took its summary (e to read it)");
+    }
+    if merged.skipped > 0 {
+        status.push_str(&format!(
+            " ({} skipped: not in the diff, or already commented)",
+            merged.skipped
+        ));
+    }
+    status.push(' ');
+    app.status = Some(status);
 }
 
 fn handle_key(
@@ -440,6 +460,11 @@ fn edit_review_body(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
 /// Open a pane for the AI and hand it the review. The result lands in a file
 /// that the event loop picks up; nothing here waits for it
 fn start_ai_review(app: &mut App, gh: &Gh) {
+    let Ok(root) = std::env::var("HERDR_PLUGIN_ROOT") else {
+        app.status = Some(" AI review needs to run inside a herdr pane ".into());
+        return;
+    };
+
     match gh.current_repo() {
         Ok(repo) if repo.eq_ignore_ascii_case(&app.draft.repo) => {}
         Ok(_) => {
@@ -453,16 +478,11 @@ fn start_ai_review(app: &mut App, gh: &Gh) {
         }
     }
 
-    let Ok(root) = std::env::var("HERDR_PLUGIN_ROOT") else {
-        app.status = Some(" AI review needs to run inside a herdr pane ".into());
-        return;
-    };
-
-    let out = ai::review_path(&review::state_dir(), &app.draft.repo, app.draft.pr_number);
+    let state = review::state_dir();
+    let out = ai::review_path(&state, &app.draft.repo, app.draft.pr_number);
 
     // A failure below the spawn (missing ai.sh, missing herdr, a failed pane split, ...) would
     // otherwise vanish silently, so route it to the same log gh::log_error writes to
-    let state = review::state_dir();
     let stderr = std::fs::create_dir_all(&state)
         .and_then(|()| {
             std::fs::OpenOptions::new().create(true).append(true).open(state.join("log"))

@@ -30,6 +30,8 @@ pub struct Merged {
     pub added: usize,
     /// Not on the current diff, or a comment is already there
     pub skipped: usize,
+    /// One entry per skipped comment, `path:line SIDE`, for logging
+    pub skipped_targets: Vec<String>,
 }
 
 pub fn review_path(state_dir: &Path, repo: &str, pr_number: u32) -> PathBuf {
@@ -59,16 +61,19 @@ pub fn take(state_dir: &Path, repo: &str, pr_number: u32) -> Result<Option<AiRev
 
 /// A comment already on the target wins, whoever wrote it — the AI never overwrites
 pub fn merge(app: &mut App, review: AiReview) -> Merged {
-    let mut merged = Merged { added: 0, skipped: 0 };
+    let mut merged = Merged { added: 0, skipped: 0, skipped_targets: Vec::new() };
 
     for c in review.comments {
+        let label = target_label(&c.path, c.line, c.side);
         if !app.line_in_diff(&c.path, c.line, c.side) {
             merged.skipped += 1;
+            merged.skipped_targets.push(label);
             continue;
         }
         let target = CommentTarget { path: c.path, line: c.line, side: c.side };
         if app.draft.comment_at(&target).is_some() {
             merged.skipped += 1;
+            merged.skipped_targets.push(label);
             continue;
         }
         app.draft.upsert_comment(target, c.body, true);
@@ -79,6 +84,14 @@ pub fn merge(app: &mut App, review: AiReview) -> Merged {
         app.draft.body = review.body;
     }
     merged
+}
+
+fn target_label(path: &str, line: u32, side: Side) -> String {
+    let side = match side {
+        Side::Right => "RIGHT",
+        Side::Left => "LEFT",
+    };
+    format!("{path}:{line} {side}")
 }
 
 #[cfg(test)]
@@ -148,6 +161,7 @@ diff --git a/a.rs b/a.rs
         let merged = merge(&mut app, review);
 
         assert_eq!((merged.added, merged.skipped), (0, 1));
+        assert_eq!(merged.skipped_targets, vec!["a.rs:900 RIGHT"]);
         assert!(app.draft.comments.is_empty());
     }
 
@@ -164,6 +178,7 @@ diff --git a/a.rs b/a.rs
         let merged = merge(&mut app, review);
 
         assert_eq!((merged.added, merged.skipped), (0, 1));
+        assert_eq!(merged.skipped_targets, vec!["a.rs:1 RIGHT"]);
         assert_eq!(app.draft.comment_at(&t).unwrap().body, "mine");
         assert!(!app.draft.comment_at(&t).unwrap().ai);
     }

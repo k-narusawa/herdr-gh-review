@@ -23,9 +23,10 @@ Review pull request #${pr} of ${repo} and write the result to ${out} as JSON.
 
 1. Run Claude Code's built-in code-review skill for PR #${pr} (the one that takes a PR number
    and returns findings — not a plugin whose last step posts a comment to GitHub).
-   Do not write to GitHub in any way: no \`gh pr comment\`, no \`gh pr review\`, no \`gh api\`
-   write calls. If the review procedure you are following ends by posting a comment, stop
-   before that step and write the JSON file instead.
+   Do not write to GitHub in any way: no 'gh pr comment', no 'gh pr review', no 'gh api' write
+   calls. Do not pass --comment or --fix, and do not modify the working tree. If the review
+   procedure you are following ends by posting a comment, stop before that step and write the
+   JSON file instead.
 2. Turn the findings into this shape, write it to ${out}.tmp, then move that file to ${out}
    (written whole or not at all, so the 0.5s poll on the other end never reads a half-finished
    file):
@@ -34,10 +35,12 @@ Review pull request #${pr} of ${repo} and write the result to ${out} as JSON.
    - body says what is wrong and how to fix it
 3. Say only that you have written the file.
 
-If no code-review skill is available, read the diff with \`gh pr diff ${pr}\`, review it
-yourself, and write the same JSON. Still never write to GitHub.
+If no code-review skill is available, read the diff with 'gh pr diff ${pr}', review it
+yourself, and write the same JSON. Still never write to GitHub or modify the working tree.
 EOF
 
+# --cwd "$PWD" pins the new pane to this process's directory instead of relying on split
+# inheriting it, so it is always the same repo the Rust side's current_repo() guard checked
 # herdr pane split returns pane info as JSON; the new pane's id is at .result.pane.pane_id
-pane_id="$("$HERDR" pane split --current --direction right --no-focus | jq -r '.result.pane.pane_id')"
+pane_id="$("$HERDR" pane split --current --direction right --no-focus --cwd "$PWD" | jq -r '.result.pane.pane_id')"
 "$HERDR" pane run "$pane_id" "$AGENT" "$prompt"

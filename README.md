@@ -89,6 +89,9 @@ or path — it is not passed through a shell, so it cannot carry extra arguments
 AI review only works on pull requests in the current repository, so a PR opened from a URL
 in another repository cannot use it.
 
+If pressing `A` never opens a pane, the failure (a missing `jq`, a failed `herdr pane split`, ...)
+is in `~/.local/state/herdr/plugins/k-narusawa.gh-review/log`.
+
 ## When the PR gets new commits
 
 New commits change the diff, so some of the lines you commented on may no longer be in it.
