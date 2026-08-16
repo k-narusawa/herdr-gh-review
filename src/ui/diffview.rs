@@ -46,7 +46,7 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 fn render_body(app: &mut App, frame: &mut Frame, area: Rect) {
-    if area.width < super::filetree::MIN_TERMINAL_WIDTH {
+    if !app.show_tree || area.width < super::filetree::MIN_TERMINAL_WIDTH {
         return render_diff(app, frame, area);
     }
     let [tree, diff] =

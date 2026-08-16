@@ -203,6 +203,7 @@ fn handle_key(
         (KeyCode::Char('}'), _) => app.next_file(),
         (KeyCode::Char('{'), _) => app.prev_file(),
         (KeyCode::Tab, _) => app.toggle_collapse(),
+        (KeyCode::Char('T'), _) => app.show_tree = !app.show_tree,
         (KeyCode::Char('c'), _) => comment_on_cursor(terminal, app)?,
         (KeyCode::Char('d'), _) => delete_comment_on_cursor(app)?,
         (KeyCode::Char('e'), _) => edit_review_body(terminal, app)?,

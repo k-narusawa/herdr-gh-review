@@ -33,6 +33,7 @@ pub struct App {
     pub rows: Vec<Row>,
     pub cursor: usize,
     pub scroll: usize,
+    pub show_tree: bool,
     /// 左のファイルツリーのスクロール位置
     pub tree_scroll: usize,
     pub status: Option<String>,
@@ -48,6 +49,7 @@ impl App {
             rows: Vec::new(),
             cursor: 0,
             scroll: 0,
+            show_tree: true,
             tree_scroll: 0,
             status: None,
         };
