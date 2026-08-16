@@ -266,16 +266,21 @@ impl App {
         self.draft.comments.retain(|c| is_on_diff(diff, c));
         before - self.draft.comments.len()
     }
+
+    pub fn line_in_diff(&self, path: &str, line: u32, side: Side) -> bool {
+        target_in_diff(&self.diff, path, line, side)
+    }
 }
 
 fn is_on_diff(diff: &crate::diff::ParsedDiff, comment: &DraftComment) -> bool {
+    target_in_diff(diff, &comment.path, comment.line, comment.side)
+}
+
+fn target_in_diff(diff: &crate::diff::ParsedDiff, path: &str, line: u32, side: Side) -> bool {
     diff.files.iter().any(|file| {
-        file.hunks.iter().flat_map(|hunk| &hunk.lines).any(|line| {
-            file.comment_target(line).is_some_and(|target| {
-                target.path == comment.path
-                    && target.line == comment.line
-                    && target.side == comment.side
-            })
+        file.hunks.iter().flat_map(|hunk| &hunk.lines).any(|l| {
+            file.comment_target(l)
+                .is_some_and(|t| t.path == path && t.line == line && t.side == side)
         })
     })
 }
