@@ -46,6 +46,17 @@ fn render_status(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 fn render_body(app: &mut App, frame: &mut Frame, area: Rect) {
+    if area.width < super::filetree::MIN_TERMINAL_WIDTH {
+        return render_diff(app, frame, area);
+    }
+    let [tree, diff] =
+        Layout::horizontal([Constraint::Length(super::filetree::WIDTH), Constraint::Min(1)])
+            .areas(area);
+    super::filetree::render(app, frame, tree);
+    render_diff(app, frame, diff);
+}
+
+fn render_diff(app: &mut App, frame: &mut Frame, area: Rect) {
     let height = area.height as usize;
     app.scroll = clamp_scroll(app.scroll, app.cursor, height);
 
@@ -62,7 +73,7 @@ fn render_body(app: &mut App, frame: &mut Frame, area: Rect) {
 }
 
 /// カーソルが画面外に出ないところまでだけスクロールを動かす
-fn clamp_scroll(scroll: usize, cursor: usize, height: usize) -> usize {
+pub(super) fn clamp_scroll(scroll: usize, cursor: usize, height: usize) -> usize {
     if height == 0 {
         return 0;
     }

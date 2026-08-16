@@ -33,6 +33,8 @@ pub struct App {
     pub rows: Vec<Row>,
     pub cursor: usize,
     pub scroll: usize,
+    /// 左のファイルツリーのスクロール位置
+    pub tree_scroll: usize,
     pub status: Option<String>,
 }
 
@@ -46,6 +48,7 @@ impl App {
             rows: Vec::new(),
             cursor: 0,
             scroll: 0,
+            tree_scroll: 0,
             status: None,
         };
         app.set_diff(raw_diff);
