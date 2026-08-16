@@ -119,12 +119,17 @@ impl App {
         let Some(comment) = self.draft.comment_at(&target) else {
             return;
         };
-        for body_line in comment.body.lines() {
+        for (i, body_line) in comment.body.lines().enumerate() {
+            let body_line = if comment.ai && i == 0 {
+                format!("[AI] {body_line}")
+            } else {
+                body_line.to_string()
+            };
             rows.push(Row::Comment {
                 path: target.path.clone(),
                 line: target.line,
                 side: target.side,
-                body_line: body_line.to_string(),
+                body_line,
             });
         }
     }
@@ -359,6 +364,7 @@ diff --git a/b.rs b/b.rs
         a.draft.upsert_comment(
             CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
             "first line\nsecond line".into(),
+            false,
         );
         a.rebuild_rows();
         // rows[2]="-one", rows[3]="+ONE" (a.rs:1 RIGHT), then the two comment lines
@@ -409,10 +415,12 @@ diff --git a/b.rs b/b.rs
         a.draft.upsert_comment(
             CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
             "on a line that is still here".into(),
+            false,
         );
         a.draft.upsert_comment(
             CommentTarget { path: "a.rs".into(), line: 999, side: Side::Right },
             "on a line the PR update removed".into(),
+            false,
         );
         a.rebuild_rows();
         a
@@ -424,6 +432,7 @@ diff --git a/b.rs b/b.rs
         a.draft.upsert_comment(
             CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
             "a visible comment".into(),
+            false,
         );
         a.rebuild_rows();
         assert_eq!(a.stale_comments(), 0);
@@ -535,6 +544,7 @@ diff --git a/a.rs b/a.rs
         a.draft.upsert_comment(
             CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
             "a comment on the keep line".into(),
+            false,
         );
         a.toggle_split();
         assert_eq!(

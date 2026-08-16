@@ -358,7 +358,7 @@ fn comment_on_cursor(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> 
         return Ok(());
     };
 
-    app.draft.upsert_comment(target, body);
+    app.draft.upsert_comment(target, body, false);
     review::save(&review::state_dir(), &app.draft)?;
     app.rebuild_rows();
     Ok(())
