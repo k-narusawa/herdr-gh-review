@@ -40,6 +40,11 @@ pub fn review_path(state_dir: &Path, repo: &str, pr_number: u32) -> PathBuf {
         .join(format!("{}-{}.json", repo.replace('/', "-"), pr_number))
 }
 
+/// Where ai.sh records the panes it opened, one id per line, so they can be closed again
+pub fn panes_path(state_dir: &Path, repo: &str, pr_number: u32) -> PathBuf {
+    review_path(state_dir, repo, pr_number).with_extension("panes")
+}
+
 /// Read and remove what the AI pane left. `Ok(None)` when nothing is waiting.
 /// A corrupt file is moved aside, so a later look does not trip over it again
 pub fn take(state_dir: &Path, repo: &str, pr_number: u32) -> Result<Option<AiReview>> {
@@ -224,6 +229,12 @@ diff --git a/a.rs b/a.rs
             std::fs::read_to_string(path.with_extension("json.corrupt")).unwrap(),
             "{ broken"
         );
+    }
+
+    #[test]
+    fn panes_path_sits_beside_the_handoff_file() {
+        let p = panes_path(std::path::Path::new("/state"), "k-narusawa/app", 42);
+        assert_eq!(p, std::path::Path::new("/state/ai/k-narusawa-app-42.panes"));
     }
 
     #[test]

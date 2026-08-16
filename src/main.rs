@@ -12,6 +12,7 @@ use anyhow::{Result, anyhow};
 use app::App;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use gh::{Gh, PrDetail, PrSummary};
+use std::path::Path;
 use std::time::Duration;
 use target::Target;
 
@@ -139,7 +140,29 @@ fn open_pr(
             Some(" the saved draft predates the current commit — check the line positions ".into());
     }
     sync_head(&mut app, &pr);
-    run_diff_view(terminal, gh, &mut app, &mut pr)
+    let result = run_diff_view(terminal, gh, &mut app, &mut pr);
+    close_ai_panes(&state, &pr.repo, pr.number);
+    result
+}
+
+/// Leaving the diff view takes the AI panes with it — an agent still working is cut off, and
+/// its findings with it, but `A` starts a fresh one. Nothing here is worth failing the exit over
+fn close_ai_panes(state: &Path, repo: &str, pr_number: u32) {
+    let panes = ai::panes_path(state, repo, pr_number);
+    if !panes.exists() {
+        return;
+    }
+    let Ok(root) = std::env::var("HERDR_PLUGIN_ROOT") else {
+        return;
+    };
+    if let Err(e) = std::process::Command::new("bash")
+        .arg(format!("{root}/herdr/ai.sh"))
+        .arg("--close")
+        .arg(&panes)
+        .output()
+    {
+        gh::log_error(&anyhow::Error::from(e));
+    }
 }
 
 /// commit_id always points at the PR's current head; GitHub rejects a submit on a stale SHA

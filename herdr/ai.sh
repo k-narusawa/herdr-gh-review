@@ -42,6 +42,17 @@ if [ "${1:-}" = "--exec" ]; then
   exec "$agent" "$(cat "$3")"
 fi
 
+# Leaving the diff view closes the panes it opened. Called with the file ai.sh appended their
+# ids to; a pane the user already closed by hand just fails, which is fine
+if [ "${1:-}" = "--close" ]; then
+  [ -f "$2" ] || exit 0
+  while read -r id; do
+    [ -n "$id" ] && "$HERDR" pane close "$id" >/dev/null 2>&1 || true
+  done <"$2"
+  rm -f "$2" "${2%.panes}.prompt"
+  exit 0
+fi
+
 repo="${1:?usage: ai.sh <repo> <pr> <outpath>}"
 pr="${2:?}"
 out="${3:?}"
@@ -82,6 +93,9 @@ printf '%s' "$prompt" >"$prompt_file"
 # inheriting it, so it is always the same repo the Rust side's current_repo() guard checked
 # herdr pane split returns pane info as JSON; the new pane's id is at .result.pane.pane_id
 pane_id="$("$HERDR" pane split --current --direction right --no-focus --cwd "$PWD" | jq -r '.result.pane.pane_id')"
+
+# Recorded so leaving the diff view can close what it opened. One line per press of A
+printf '%s\n' "$pane_id" >>"${out%.json}.panes"
 
 # The paths are quoted for the pane's shell, which is what reads this line
 "$HERDR" pane run "$pane_id" bash "$(printf '%q' "$0")" --exec "$AGENT" "$(printf '%q' "$prompt_file")"

@@ -81,7 +81,9 @@ Reviews in progress are saved automatically, and cleared only once a submit succ
 built-in `/code-review` skill. Nothing is posted to GitHub — the findings come back as draft
 comments in this pane, marked `[AI]`, and you edit, delete, or submit them as your own.
 
-The pane stays open, so you can keep talking to the agent about what it found.
+The pane stays open while you review, so you can keep talking to the agent about what it found.
+Leaving the diff view with `q` closes it again — including an agent still working, which loses
+that run's findings, so wait for the merge before you leave.
 
 ### What the agent is and isn't allowed to do
 
