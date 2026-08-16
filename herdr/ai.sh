@@ -6,6 +6,13 @@ PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.local/share/mise/
 HERDR="${HERDR_BIN_PATH:-herdr}"
 AGENT="${GH_REVIEW_AI_CMD:-claude}"
 
+# herdr pane run types its command into the pane's shell instead of exec'ing argv, so a prose
+# prompt cannot be passed as an argument — the shell would split and reparse it. The pane runs
+# this branch instead, and the prompt reaches the agent as one argv element, never via a shell
+if [ "${1:-}" = "--exec" ]; then
+  exec "$2" "$(cat "$3")"
+fi
+
 repo="${1:?usage: ai.sh <repo> <pr> <outpath>}"
 pr="${2:?}"
 out="${3:?}"
@@ -39,8 +46,13 @@ If no code-review skill is available, read the diff with 'gh pr diff ${pr}', rev
 yourself, and write the same JSON. Still never write to GitHub or modify the working tree.
 EOF
 
+prompt_file="${out%.json}.prompt"
+printf '%s' "$prompt" >"$prompt_file"
+
 # --cwd "$PWD" pins the new pane to this process's directory instead of relying on split
 # inheriting it, so it is always the same repo the Rust side's current_repo() guard checked
 # herdr pane split returns pane info as JSON; the new pane's id is at .result.pane.pane_id
 pane_id="$("$HERDR" pane split --current --direction right --no-focus --cwd "$PWD" | jq -r '.result.pane.pane_id')"
-"$HERDR" pane run "$pane_id" "$AGENT" "$prompt"
+
+# The paths are quoted for the pane's shell, which is what reads this line
+"$HERDR" pane run "$pane_id" bash "$(printf '%q' "$0")" --exec "$AGENT" "$(printf '%q' "$prompt_file")"
