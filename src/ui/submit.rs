@@ -11,24 +11,20 @@ pub const EVENTS: [ReviewEvent; 3] = [
     ReviewEvent::RequestChanges,
 ];
 
-pub fn render(draft: &Draft, cursor: usize, frame: &mut Frame) {
-    let [area] = Layout::horizontal([Constraint::Length(56)])
-        .flex(Flex::Center)
-        .areas(frame.area());
-    let [area] = Layout::vertical([Constraint::Length(10)])
-        .flex(Flex::Center)
-        .areas(area);
+pub fn render(draft: &Draft, stale: usize, cursor: usize, frame: &mut Frame) {
+    let mut lines = vec![Line::from(format!(
+        "  行コメント {} 件 / 全体コメント {}",
+        draft.comments.len() - stale,
+        if draft.body.trim().is_empty() { "なし" } else { "あり" }
+    ))];
+    if stale > 0 {
+        lines.push(Line::from(Span::styled(
+            format!("  ⚠ 現在のdiffに無い {stale} 件は送りません"),
+            Style::default().fg(Color::Yellow),
+        )));
+    }
+    lines.push(Line::from(""));
 
-    frame.render_widget(Clear, area);
-
-    let mut lines = vec![
-        Line::from(format!(
-            "  行コメント {} 件 / 全体コメント {}",
-            draft.comments.len(),
-            if draft.body.trim().is_empty() { "なし" } else { "あり" }
-        )),
-        Line::from(""),
-    ];
     for (i, event) in EVENTS.iter().enumerate() {
         let text = format!("  {}  ", event.label());
         lines.push(if i == cursor {
@@ -43,6 +39,14 @@ pub fn render(draft: &Draft, cursor: usize, frame: &mut Frame) {
         Style::default().fg(Color::DarkGray),
     )));
 
+    let [area] = Layout::horizontal([Constraint::Length(56)])
+        .flex(Flex::Center)
+        .areas(frame.area());
+    let [area] = Layout::vertical([Constraint::Length(lines.len() as u16 + 2)])
+        .flex(Flex::Center)
+        .areas(area);
+
+    frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(" Submit review ")),
         area,

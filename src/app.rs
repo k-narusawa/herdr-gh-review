@@ -1,5 +1,5 @@
 use crate::diff::{CommentTarget, DiffLine, FileDiff, LineKind, ParsedDiff, Side};
-use crate::review::Draft;
+use crate::review::{Draft, DraftComment};
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -231,27 +231,48 @@ impl App {
         file.comment_target(line)
     }
 
-    /// 現在のdiffに一致する行が無い下書きコメント。PRに新しいコミットが積まれると発生し、
-    /// 画面には出ないまま提出リクエストには含まれる
-    pub fn unmatched_comments(&self) -> usize {
+    /// 現在のdiffに一致する行が無い下書きコメント。PRに新しいコミットが積まれると発生する
+    pub fn stale_comments(&self) -> usize {
         self.draft
             .comments
             .iter()
-            .filter(|comment| !self.is_on_current_diff(comment))
+            .filter(|c| !is_on_diff(&self.diff, c))
             .count()
     }
 
-    fn is_on_current_diff(&self, comment: &crate::review::DraftComment) -> bool {
-        self.diff.files.iter().any(|file| {
-            file.hunks.iter().flat_map(|hunk| &hunk.lines).any(|line| {
-                file.comment_target(line).is_some_and(|target| {
-                    target.path == comment.path
-                        && target.line == comment.line
-                        && target.side == comment.side
-                })
+    /// GitHubに送る下書き。現在のdiffに無い行を含めるとレビュー全体が422で拒否されるので落とす
+    pub fn submittable_draft(&self) -> Draft {
+        let mut draft = self.draft.clone();
+        draft.comments.retain(|c| is_on_diff(&self.diff, c));
+        draft
+    }
+
+    /// 提出できたコメントだけを下書きから消す。残った件数を返す
+    pub fn retain_stale_comments(&mut self) -> usize {
+        let diff = &self.diff;
+        self.draft.comments.retain(|c| !is_on_diff(diff, c));
+        self.draft.comments.len()
+    }
+
+    /// 現在のdiffに無いコメントを捨てる。捨てた件数を返す
+    pub fn discard_stale_comments(&mut self) -> usize {
+        let before = self.draft.comments.len();
+        let diff = &self.diff;
+        self.draft.comments.retain(|c| is_on_diff(diff, c));
+        before - self.draft.comments.len()
+    }
+}
+
+fn is_on_diff(diff: &crate::diff::ParsedDiff, comment: &DraftComment) -> bool {
+    diff.files.iter().any(|file| {
+        file.hunks.iter().flat_map(|hunk| &hunk.lines).any(|line| {
+            file.comment_target(line).is_some_and(|target| {
+                target.path == comment.path
+                    && target.line == comment.line
+                    && target.side == comment.side
             })
         })
-    }
+    })
 }
 
 /// 削除行と追加行を左右に対応付ける。数が合わない分は空セル(`None`)になる。
@@ -382,6 +403,21 @@ diff --git a/b.rs b/b.rs
         assert_eq!(t.side, Side::Right);
     }
 
+    /// 生きたコメント1件と、PR更新で行が消えたコメント1件を持つApp
+    fn app_with_a_stale_comment() -> App {
+        let mut a = app();
+        a.draft.upsert_comment(
+            CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
+            "見えているコメント".into(),
+        );
+        a.draft.upsert_comment(
+            CommentTarget { path: "a.rs".into(), line: 999, side: Side::Right },
+            "PRが更新されて消えた行のコメント".into(),
+        );
+        a.rebuild_rows();
+        a
+    }
+
     #[test]
     fn comment_on_a_current_line_is_matched() {
         let mut a = app();
@@ -390,20 +426,42 @@ diff --git a/b.rs b/b.rs
             "見えているコメント".into(),
         );
         a.rebuild_rows();
-        assert_eq!(a.unmatched_comments(), 0);
+        assert_eq!(a.stale_comments(), 0);
     }
 
     #[test]
-    fn comment_on_a_vanished_line_is_reported_as_unmatched() {
-        let mut a = app();
-        a.draft.upsert_comment(
-            CommentTarget { path: "a.rs".into(), line: 999, side: Side::Right },
-            "PRが更新されて消えた行のコメント".into(),
-        );
-        a.rebuild_rows();
-        assert_eq!(a.unmatched_comments(), 1);
-        // 画面には出ない = これが罠の本体
-        assert!(!a.rows.iter().any(|r| matches!(r, Row::Comment { .. })));
+    fn comment_on_a_vanished_line_is_reported_as_stale() {
+        let a = app_with_a_stale_comment();
+        assert_eq!(a.stale_comments(), 1);
+        // 消えた行のコメントは画面に出ない = 気付けないまま提出されるのが罠の本体
+        assert_eq!(a.rows.iter().filter(|r| matches!(r, Row::Comment { .. })).count(), 1);
+    }
+
+    /// これが 422 を防いでいる本体。送るのは今のdiffに在る行だけ
+    #[test]
+    fn submittable_draft_leaves_stale_comments_behind() {
+        let a = app_with_a_stale_comment();
+        let sent = a.submittable_draft();
+        assert_eq!(sent.comments.len(), 1);
+        assert_eq!(sent.comments[0].line, 1);
+        // 下書き本体は削られない
+        assert_eq!(a.draft.comments.len(), 2);
+    }
+
+    #[test]
+    fn retain_stale_comments_drops_only_what_was_submitted() {
+        let mut a = app_with_a_stale_comment();
+        assert_eq!(a.retain_stale_comments(), 1);
+        assert_eq!(a.draft.comments[0].line, 999);
+    }
+
+    #[test]
+    fn discard_stale_comments_drops_only_the_stale_ones() {
+        let mut a = app_with_a_stale_comment();
+        assert_eq!(a.discard_stale_comments(), 1);
+        assert_eq!(a.draft.comments.len(), 1);
+        assert_eq!(a.draft.comments[0].line, 1);
+        assert_eq!(a.stale_comments(), 0);
     }
 
     const UNEVEN: &str = "\

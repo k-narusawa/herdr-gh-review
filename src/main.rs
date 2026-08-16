@@ -139,7 +139,7 @@ fn open_pr(
     repo: Option<&str>,
     number: u32,
 ) -> Result<()> {
-    let pr = gh.pr_detail(repo, number)?;
+    let mut pr = gh.pr_detail(repo, number)?;
     let raw = gh.pr_diff(&pr.repo, pr.number)?;
     let state = review::state_dir();
     let draft = review::load(&state, &pr.repo, pr.number)?
@@ -151,8 +151,14 @@ fn open_pr(
             " 保存されていた下書きは古いコミットのものです。行の位置を確認してください ".into(),
         );
     }
-    warn_unmatched(&mut app);
-    run_diff_view(terminal, gh, &mut app, &pr)
+    sync_head(&mut app, &pr);
+    run_diff_view(terminal, gh, &mut app, &mut pr)
+}
+
+/// commit_id は常にPRの現在のheadを指す。古いSHAのまま提出するとGitHubに拒否される
+fn sync_head(app: &mut App, pr: &PrDetail) {
+    app.draft.head_sha = pr.head_sha.clone();
+    warn_stale(app);
 }
 
 enum KeyOutcome {
@@ -164,7 +170,7 @@ fn run_diff_view(
     terminal: &mut ratatui::DefaultTerminal,
     gh: &Gh,
     app: &mut App,
-    pr: &PrDetail,
+    pr: &mut PrDetail,
 ) -> Result<()> {
     loop {
         terminal.draw(|f| ui::diffview::render(app, pr, f))?;
@@ -186,7 +192,7 @@ fn handle_key(
     terminal: &mut ratatui::DefaultTerminal,
     gh: &Gh,
     app: &mut App,
-    pr: &PrDetail,
+    pr: &mut PrDetail,
     key: KeyEvent,
 ) -> Result<KeyOutcome> {
     let half_page = 15;
@@ -209,6 +215,7 @@ fn handle_key(
         (KeyCode::Char('l'), _) | (KeyCode::Right, _) => app.cursor_side = diff::Side::Right,
         (KeyCode::Char('c'), _) => comment_on_cursor(terminal, app)?,
         (KeyCode::Char('d'), _) => delete_comment_on_cursor(app)?,
+        (KeyCode::Char('D'), _) => discard_stale_comments(app)?,
         (KeyCode::Char('e'), _) => edit_review_body(terminal, app)?,
         (KeyCode::Char('S'), _) => submit(terminal, app, gh)?,
         (KeyCode::Char('o'), _) => {
@@ -227,13 +234,18 @@ fn handle_key(
     Ok(KeyOutcome::Continue)
 }
 
-/// 下書きは残したままdiffだけ取り直す。失敗しても今の画面は壊さない
-fn reload(app: &mut App, gh: &Gh, pr: &PrDetail) -> Result<()> {
-    match gh.pr_diff(&pr.repo, pr.number) {
-        Ok(raw) => {
+/// 下書きは残したままPRを取り直す。失敗しても今の画面は壊さない
+fn reload(app: &mut App, gh: &Gh, pr: &mut PrDetail) -> Result<()> {
+    let fetched = gh
+        .pr_detail(Some(&pr.repo), pr.number)
+        .and_then(|detail| Ok((gh.pr_diff(&detail.repo, detail.number)?, detail)));
+
+    match fetched {
+        Ok((raw, detail)) => {
+            *pr = detail;
             app.set_diff(&raw);
             app.status = Some(" 再読み込みしました ".into());
-            warn_unmatched(app);
+            sync_head(app, pr);
         }
         Err(e) => {
             gh::log_error(&e);
@@ -243,21 +255,34 @@ fn reload(app: &mut App, gh: &Gh, pr: &PrDetail) -> Result<()> {
     Ok(())
 }
 
-/// 画面に出ないコメントは、提出時にGitHubがレビュー全体を422で拒否する原因になる
-fn warn_unmatched(app: &mut App) {
-    let n = app.unmatched_comments();
+/// 画面に出ないまま提出から外れるコメントがあることは、必ず伝える
+fn warn_stale(app: &mut App) {
+    let n = app.stale_comments();
     if n > 0 {
         app.status = Some(format!(
-            " 現在のdiffに一致しないコメントが{n}件あります。このまま提出すると失敗します ",
+            " 現在のdiffに無い行のコメントが{n}件あります。提出しても送られません（D で破棄） ",
         ));
     }
 }
 
+fn discard_stale_comments(app: &mut App) -> Result<()> {
+    let n = app.discard_stale_comments();
+    if n == 0 {
+        app.status = Some(" 破棄するコメントはありません ".into());
+        return Ok(());
+    }
+    review::save(&review::state_dir(), &app.draft)?;
+    app.rebuild_rows();
+    app.status = Some(format!(" 現在のdiffに無いコメントを{n}件破棄しました "));
+    Ok(())
+}
+
 fn submit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, gh: &Gh) -> Result<()> {
     let mut cursor = 0usize;
+    let stale = app.stale_comments();
 
     loop {
-        terminal.draw(|f| ui::submit::render(&app.draft, cursor, f))?;
+        terminal.draw(|f| ui::submit::render(&app.draft, stale, cursor, f))?;
 
         let Event::Key(key) = event::read()? else {
             continue;
@@ -273,25 +298,31 @@ fn submit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, gh: &Gh) -> Re
             KeyCode::Char('k') | KeyCode::Up => cursor = cursor.saturating_sub(1),
             KeyCode::Enter => {
                 let event = ui::submit::EVENTS[cursor];
-                match gh.submit_review(&app.draft, event) {
+                match gh.submit_review(&app.submittable_draft(), event) {
                     Ok(()) => {
-                        app.draft.comments.clear();
+                        // 送れたものだけ下書きから消す。送れなかったコメントは書き直せるように残す
                         app.draft.body.clear();
+                        let kept = app.retain_stale_comments();
                         app.rebuild_rows();
 
                         // GitHubは受理済み。下書きの後片付けが失敗しても提出の失敗として
                         // 扱うと、ユーザーが再提出して重複レビューになりかねない
-                        let cleanup = review::delete(
-                            &review::state_dir(),
-                            &app.draft.repo,
-                            app.draft.pr_number,
-                        );
-                        app.status = Some(match cleanup {
-                            Ok(()) => format!(" {} で提出しました ", event.label()),
-                            Err(e) => {
+                        let state = review::state_dir();
+                        let cleanup = if kept == 0 {
+                            review::delete(&state, &app.draft.repo, app.draft.pr_number)
+                        } else {
+                            review::save(&state, &app.draft)
+                        };
+                        app.status = Some(match (cleanup, kept) {
+                            (Ok(()), 0) => format!(" {} で提出しました ", event.label()),
+                            (Ok(()), n) => format!(
+                                " {} で提出しました（現在のdiffに無い{n}件は送っていません） ",
+                                event.label()
+                            ),
+                            (Err(e), _) => {
                                 gh::log_error(&e);
                                 format!(
-                                    " {} で提出しました（下書きファイルは削除できませんでした） ",
+                                    " {} で提出しました（下書きファイルを更新できませんでした） ",
                                     event.label()
                                 )
                             }
