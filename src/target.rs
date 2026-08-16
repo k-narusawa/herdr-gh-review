@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow};
 pub enum Target {
     RepoPrList,
     ReviewRequested,
+    Authored,
     Pr { repo: Option<String>, number: u32 },
 }
 
@@ -13,6 +14,7 @@ impl Target {
         match args {
             [] => {}
             [flag] if flag == "--review-requested" => return Ok(Target::ReviewRequested),
+            [flag] if flag == "--authored" => return Ok(Target::Authored),
             [flag, value] if flag == "--pr" => {
                 let number = value
                     .parse()
@@ -21,13 +23,14 @@ impl Target {
             }
             [flag, value] if flag == "--url" => return Self::from_url(value),
             _ => return Err(anyhow!(
-                "usage: herdr-gh-review [--review-requested | --pr <number> | --url <url>]"
+                "usage: herdr-gh-review [--review-requested | --authored | --pr <number> | --url <url>]"
             )),
         }
 
         match env {
             None => Ok(Target::RepoPrList),
             Some("review-requested") => Ok(Target::ReviewRequested),
+            Some("authored") => Ok(Target::Authored),
             Some(value) if value.contains("/pull/") => Self::from_url(value),
             // 想定外の値で起動を止めるより、既定の一覧を出す方が使う側の損失が小さい
             Some(_) => Ok(Target::RepoPrList),
@@ -84,6 +87,19 @@ mod tests {
             Target::resolve(&args(["--pr", "42"].as_slice()), None).unwrap(),
             Target::Pr { repo: None, number: 42 }
         );
+    }
+
+    #[test]
+    fn flag_selects_authored() {
+        assert_eq!(
+            Target::resolve(&args(["--authored"].as_slice()), None).unwrap(),
+            Target::Authored
+        );
+    }
+
+    #[test]
+    fn env_selects_authored() {
+        assert_eq!(Target::resolve(&[], Some("authored")).unwrap(), Target::Authored);
     }
 
     #[test]

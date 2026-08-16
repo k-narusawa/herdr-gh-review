@@ -187,6 +187,14 @@ impl Gh {
         parse_search(&json)
     }
 
+    pub fn search_authored(&self) -> Result<Vec<PrSummary>> {
+        let json = self.run(&[
+            "search", "prs", "--author=@me", "--state=open",
+            "--limit", "50", "--json", "number,title,author,repository,isDraft,url",
+        ])?;
+        parse_search(&json)
+    }
+
     pub fn pr_detail(&self, repo: Option<&str>, number: u32) -> Result<PrDetail> {
         let number = number.to_string();
         let mut args = vec![

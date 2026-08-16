@@ -22,8 +22,12 @@ bash ./herdr-gh-review/herdr/install.sh
 | アクション | 内容 |
 |---|---|
 | `gh-review: open PR list` | カレントリポジトリのopen PR一覧 |
-| `gh-review: PRs awaiting my review` | 自分がレビューを依頼されているPR |
+| `gh-review: PRs awaiting my review` | 自分がレビューを依頼されているPR（リポジトリ横断） |
+| `gh-review: my open PRs` | 自分が作成したPR（リポジトリ横断）。人に見せる前の自己レビュー用 |
 | PR URLをクリック | そのPRを直接開く |
+
+カレントリポジトリのリモートを見るのは `open PR list` だけで、他はどこから起動しても動く。
+手で起動する場合は `--review-requested` / `--authored` / `--pr <番号>` / `--url <URL>` を渡す。
 
 ### キー操作
 
