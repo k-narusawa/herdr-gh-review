@@ -17,6 +17,19 @@ herdr plugin link ./herdr-gh-review
 bash ./herdr-gh-review/herdr/install.sh
 ```
 
+## 開発
+
+linkは一度だけでよい。`unlink` → `link` は不要。
+
+| 変えたもの | やること |
+|---|---|
+| `src/**.rs` | `bash herdr/install.sh` してペインを開き直す |
+| `herdr/*.sh` | そのまま次の起動から反映される |
+| `herdr-plugin.toml` | `herdr plugin link .`（登録済みでも上書きされる） |
+
+ペインは毎回 `bin/herdr-gh-review` を新しく exec するので、バイナリを差し替えれば次の起動から新しい方が動く。
+`herdr-plugin.toml` だけは link 時に `~/.config/herdr/plugins.json` へ写しが作られるため、再linkが要る。
+
 ## 使い方
 
 | アクション | 内容 |
