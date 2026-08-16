@@ -6,11 +6,23 @@ PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.local/share/mise/
 HERDR="${HERDR_BIN_PATH:-herdr}"
 AGENT="${GH_REVIEW_AI_CMD:-claude}"
 
+# Denied at the tool layer, so the prompt's "never post to GitHub" stops being a request the
+# agent may reinterpret. Deny beats the permission mode, so this holds whatever the user's
+# settings say — and it is what stops a code-review skill whose last step posts a comment
+DENY="Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh pr edit:*),Bash(gh pr merge:*)"
+DENY="$DENY,Bash(gh pr close:*),Bash(gh pr ready:*),Bash(gh issue comment:*),Bash(gh api:*)"
+
 # herdr pane run types its command into the pane's shell instead of exec'ing argv, so a prose
 # prompt cannot be passed as an argument — the shell would split and reparse it. The pane runs
 # this branch instead, and the prompt reaches the agent as one argv element, never via a shell
 if [ "${1:-}" = "--exec" ]; then
-  exec "$2" "$(cat "$3")"
+  agent="$2"
+  # dontAsk so the pane runs unattended whatever defaultMode the user set — `plan` would
+  # otherwise leave the agent unable to write the file at all
+  if [ "$(basename "$agent")" = "claude" ]; then
+    exec "$agent" --permission-mode dontAsk --disallowedTools "$DENY" -- "$(cat "$3")"
+  fi
+  exec "$agent" "$(cat "$3")"
 fi
 
 repo="${1:?usage: ai.sh <repo> <pr> <outpath>}"
