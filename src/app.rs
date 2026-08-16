@@ -379,6 +379,25 @@ diff --git a/b.rs b/b.rs
     }
 
     #[test]
+    fn ai_comment_is_marked_only_on_its_first_line() {
+        let mut a = app();
+        a.draft.upsert_comment(
+            CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
+            "first line\nsecond line".into(),
+            true,
+        );
+        a.rebuild_rows();
+        let Row::Comment { ref body_line, .. } = a.rows[4] else {
+            panic!("expected a comment row, got {:?}", a.rows[4]);
+        };
+        assert_eq!(body_line, "[AI] first line");
+        let Row::Comment { ref body_line, .. } = a.rows[5] else {
+            panic!("expected a comment row");
+        };
+        assert_eq!(body_line, "second line");
+    }
+
+    #[test]
     fn cursor_stays_within_bounds() {
         let mut a = app();
         a.move_cursor(-5);
