@@ -140,6 +140,9 @@ fn open_pr(
             Some(" the saved draft predates the current commit — check the line positions ".into());
     }
     sync_head(&mut app, &pr);
+    // A review the agent finished just as the last visit ended is still on disk. Turning the
+    // poll on picks it up on the first tick, and turns itself off again
+    app.ai_pending = ai::review_path(&state, &pr.repo, pr.number).exists();
     let result = run_diff_view(terminal, gh, &mut app, &mut pr);
     close_ai_panes(&state, &pr.repo, pr.number);
     result
@@ -185,8 +188,9 @@ fn run_diff_view(
     loop {
         terminal.draw(|f| ui::diffview::render(app, pr, f))?;
 
-        // The AI writes its review in another pane, so look for it between key presses
-        if !event::poll(Duration::from_millis(500))? {
+        // The AI writes its review in another pane, so look for it between key presses. Without
+        // one running there is nothing to look for, and the read blocks as it did before
+        if app.ai_pending && !event::poll(Duration::from_millis(500))? {
             merge_ai_review(app);
             continue;
         }
@@ -211,16 +215,12 @@ fn merge_ai_review(app: &mut App) {
         Ok(None) => return,
         Err(e) => {
             gh::log_error(&e);
-            let corrupt = ai::review_path(&state, &app.draft.repo, app.draft.pr_number)
-                .with_extension("json.corrupt");
-            app.status = Some(format!(
-                " {} (saved to {}) ",
-                first_line(&e.to_string()),
-                corrupt.display()
-            ));
+            app.status = Some(format!(" {} ", first_line(&e.to_string())));
+            app.ai_pending = false;
             return;
         }
     };
+    app.ai_pending = false;
 
     let took_summary = app.draft.body.trim().is_empty() && !review.body.trim().is_empty();
     let merged = ai::merge(app, review);
@@ -240,10 +240,10 @@ fn merge_ai_review(app: &mut App) {
     if took_summary {
         status.push_str(" and took its summary (e to read it)");
     }
-    if merged.skipped > 0 {
+    if !merged.skipped_targets.is_empty() {
         status.push_str(&format!(
             " ({} skipped: not in the diff, or already commented)",
-            merged.skipped
+            merged.skipped_targets.len()
         ));
     }
     status.push(' ');
@@ -365,6 +365,7 @@ fn submit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, gh: &Gh) -> Re
                     Ok(()) => {
                         // Drop only what was sent; the rest stays so it can be rewritten
                         app.draft.body.clear();
+                        app.draft.body_ai = false;
                         let kept = app.retain_stale_comments();
                         app.rebuild_rows();
 
@@ -471,6 +472,7 @@ fn edit_review_body(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
     }
 
     app.draft.body = body;
+    app.draft.body_ai = false;
     review::save(&review::state_dir(), &app.draft)?;
     app.status = Some(if app.draft.body.is_empty() {
         " cleared the review summary ".into()
@@ -483,6 +485,15 @@ fn edit_review_body(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
 /// Open a pane for the AI and hand it the review. The result lands in a file
 /// that the event loop picks up; nothing here waits for it
 fn start_ai_review(app: &mut App, gh: &Gh) {
+    // Two agents on one handoff path race: whichever renames last wins, and the other review is
+    // lost without a word.
+    // ponytail: cleared only by a review landing, so an agent that dies takes `A` with it until
+    // you leave the diff view. Reaping the child would be the upgrade if that ever bites
+    if app.ai_pending {
+        app.status = Some(" an AI review is already running — it lands here when it finishes ".into());
+        return;
+    }
+
     let Ok(root) = std::env::var("HERDR_PLUGIN_ROOT") else {
         app.status = Some(" AI review needs to run inside a herdr pane ".into());
         return;
@@ -523,7 +534,19 @@ fn start_ai_review(app: &mut App, gh: &Gh) {
         .spawn();
 
     app.status = Some(match spawned {
-        Ok(_) => " asked the AI to review this PR ".into(),
+        Ok(mut child) => {
+            app.ai_pending = true;
+            // Dropping a Child does not reap it, so every press would leave a defunct bash behind.
+            // Waiting also catches an ai.sh that failed after the pane was already opened
+            std::thread::spawn(move || match child.wait() {
+                Ok(status) if !status.success() => {
+                    gh::log_error(&anyhow!("ai.sh exited with {status}"))
+                }
+                Err(e) => gh::log_error(&anyhow::Error::from(e)),
+                _ => {}
+            });
+            " asked the AI to review this PR ".into()
+        }
         Err(e) => {
             let e = anyhow::Error::from(e);
             gh::log_error(&e);

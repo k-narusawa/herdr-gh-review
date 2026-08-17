@@ -28,9 +28,8 @@ fn right() -> Side {
 
 pub struct Merged {
     pub added: usize,
-    /// Not on the current diff, or a comment is already there
-    pub skipped: usize,
-    /// One entry per skipped comment, `path:line SIDE`, for logging
+    /// One entry per comment that was not on the current diff, or already had a comment on it.
+    /// `path:line SIDE`, for logging — the count is just its length
     pub skipped_targets: Vec<String>,
 }
 
@@ -49,8 +48,12 @@ pub fn panes_path(state_dir: &Path, repo: &str, pr_number: u32) -> PathBuf {
 /// A corrupt file is moved aside, so a later look does not trip over it again
 pub fn take(state_dir: &Path, repo: &str, pr_number: u32) -> Result<Option<AiReview>> {
     let path = review_path(state_dir, repo, pr_number);
-    let Ok(raw) = std::fs::read_to_string(&path) else {
-        return Ok(None);
+    // Only "it is not there yet" is nothing to report. A permission or IO error looks identical
+    // from a poll that runs twice a second, so it has to come back as an error or it never surfaces
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(anyhow!("the AI review at {} could not be read: {e}", path.display())),
     };
     match serde_json::from_str(&raw) {
         Ok(review) => {
@@ -58,26 +61,28 @@ pub fn take(state_dir: &Path, repo: &str, pr_number: u32) -> Result<Option<AiRev
             Ok(Some(review))
         }
         Err(e) => {
-            let _ = std::fs::rename(&path, path.with_extension("json.corrupt"));
-            Err(anyhow!("the AI review was not valid JSON: {e}"))
+            let corrupt = path.with_extension("json.corrupt");
+            let _ = std::fs::rename(&path, &corrupt);
+            Err(anyhow!(
+                "the AI review was not valid JSON: {e} (saved to {})",
+                corrupt.display()
+            ))
         }
     }
 }
 
 /// A comment already on the target wins, whoever wrote it — the AI never overwrites
 pub fn merge(app: &mut App, review: AiReview) -> Merged {
-    let mut merged = Merged { added: 0, skipped: 0, skipped_targets: Vec::new() };
+    let mut merged = Merged { added: 0, skipped_targets: Vec::new() };
 
     for c in review.comments {
         let label = target_label(&c.path, c.line, c.side);
         if !app.line_in_diff(&c.path, c.line, c.side) {
-            merged.skipped += 1;
             merged.skipped_targets.push(label);
             continue;
         }
         let target = CommentTarget { path: c.path, line: c.line, side: c.side };
         if app.draft.comment_at(&target).is_some() {
-            merged.skipped += 1;
             merged.skipped_targets.push(label);
             continue;
         }
@@ -85,18 +90,17 @@ pub fn merge(app: &mut App, review: AiReview) -> Merged {
         merged.added += 1;
     }
 
-    if app.draft.body.trim().is_empty() {
+    // Taking the summary means the review is submitted under the reviewer's name with prose the
+    // agent wrote, so the draft carries that fact until the reviewer edits or submits it
+    if app.draft.body.trim().is_empty() && !review.body.trim().is_empty() {
         app.draft.body = review.body;
+        app.draft.body_ai = true;
     }
     merged
 }
 
 fn target_label(path: &str, line: u32, side: Side) -> String {
-    let side = match side {
-        Side::Right => "RIGHT",
-        Side::Left => "LEFT",
-    };
-    format!("{path}:{line} {side}")
+    format!("{path}:{line} {}", side.as_api_str())
 }
 
 #[cfg(test)]
@@ -150,7 +154,7 @@ diff --git a/a.rs b/a.rs
 
         let merged = merge(&mut app, review);
 
-        assert_eq!((merged.added, merged.skipped), (1, 0));
+        assert_eq!((merged.added, merged.skipped_targets.len()), (1, 0));
         let t = CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right };
         assert!(app.draft.comment_at(&t).unwrap().ai);
     }
@@ -165,7 +169,7 @@ diff --git a/a.rs b/a.rs
 
         let merged = merge(&mut app, review);
 
-        assert_eq!((merged.added, merged.skipped), (0, 1));
+        assert_eq!((merged.added, merged.skipped_targets.len()), (0, 1));
         assert_eq!(merged.skipped_targets, vec!["a.rs:900 RIGHT"]);
         assert!(app.draft.comments.is_empty());
     }
@@ -182,7 +186,7 @@ diff --git a/a.rs b/a.rs
         .unwrap();
         let merged = merge(&mut app, review);
 
-        assert_eq!((merged.added, merged.skipped), (0, 1));
+        assert_eq!((merged.added, merged.skipped_targets.len()), (0, 1));
         assert_eq!(merged.skipped_targets, vec!["a.rs:1 RIGHT"]);
         assert_eq!(app.draft.comment_at(&t).unwrap().body, "mine");
         assert!(!app.draft.comment_at(&t).unwrap().ai);

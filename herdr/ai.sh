@@ -24,8 +24,6 @@ DENY="$DENY,WebFetch,WebSearch"
 # Edit(path) is the rule form that covers every file-writing tool; Write(path) is ignored
 ALLOW="Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*)"
 ALLOW="$ALLOW,Bash(git show:*),Bash(git blame:*),Read,Grep,Glob"
-# ponytail: mv is broad because the prompt writes .tmp and renames it. rm stays denied
-ALLOW="$ALLOW,Bash(mv:*)"
 
 # herdr pane run types its command into the pane's shell instead of exec'ing argv, so a prose
 # prompt cannot be passed as an argument — the shell would split and reparse it. The pane runs
@@ -35,8 +33,12 @@ if [ "${1:-}" = "--exec" ]; then
   # No --permission-mode: whatever the agent wants to do beyond the review stops and asks, which
   # is the only thing that catches an injected instruction nobody thought to put on the deny list
   if [ "$(basename "$agent")" = "claude" ]; then
+    # The prompt writes .tmp and renames it, so exactly that one rename is pre-approved and
+    # nothing else. `Bash(mv:*)` would have paired with the Edit rule below into an unprompted
+    # write to any path on the machine — write here, move there
+    out="${3%.prompt}.json"
     # An absolute path in a permission rule takes a doubled leading slash
-    exec "$agent" --allowedTools "$ALLOW,Edit(/$(dirname "$3")/**)" \
+    exec "$agent" --allowedTools "$ALLOW,Edit(/$(dirname "$3")/**),Bash(mv $out.tmp $out)" \
       --disallowedTools "$DENY" -- "$(cat "$3")"
   fi
   exec "$agent" "$(cat "$3")"
@@ -97,5 +99,7 @@ pane_id="$("$HERDR" pane split --current --direction right --no-focus --cwd "$PW
 # Recorded so leaving the diff view can close what it opened. One line per press of A
 printf '%s\n' "$pane_id" >>"${out%.json}.panes"
 
-# The paths are quoted for the pane's shell, which is what reads this line
-"$HERDR" pane run "$pane_id" bash "$(printf '%q' "$0")" --exec "$AGENT" "$(printf '%q' "$prompt_file")"
+# Every argument is quoted for the pane's shell, which re-parses this line. $AGENT comes from
+# GH_REVIEW_AI_CMD, so leaving it bare would let a value with a space or a `;` split or run
+"$HERDR" pane run "$pane_id" bash "$(printf '%q' "$0")" --exec "$(printf '%q' "$AGENT")" \
+  "$(printf '%q' "$prompt_file")"

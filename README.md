@@ -94,10 +94,13 @@ Reviews in progress are saved automatically, and cleared only once a submit succ
 `A` splits off a pane, starts `claude` in it, and asks it to review the pull request with the
 built-in `/code-review` skill. Nothing is posted to GitHub — the findings come back as draft
 comments in this pane, in a box labelled `AI`, and you edit, delete, or submit them as your own.
+Its overall summary fills the review body only if you have not written one; the status bar and
+the submit dialog both keep saying it came from the AI until you edit it with `e`.
 
 The pane stays open while you review, so you can keep talking to the agent about what it found.
 Leaving the diff view with `q` closes it again — including an agent still working, which loses
-that run's findings, so wait for the merge before you leave.
+that run's findings, so wait for the merge before you leave. Pressing `A` again while one is
+still working does nothing — two agents would race for the same file and one review would be lost.
 
 ### What the agent is and isn't allowed to do
 
@@ -110,8 +113,9 @@ a comment is stopped there: `gh pr comment`, `gh pr review`, `gh pr edit`, `gh p
 `curl`, `wget`, `nc`, `ssh`, `scp`, `WebFetch`, `WebSearch`.
 
 **Pre-approved** — so the review never stops to ask: `gh pr diff`, `gh pr view`, `git diff`,
-`git log`, `git show`, `git blame`, `mv`, reading and searching files, and writing inside the
-handoff directory only.
+`git log`, `git show`, `git blame`, reading and searching files, writing inside the handoff
+directory only, and the one `mv` that renames the handoff file into place — that exact command
+line and no other, so the write permission cannot be turned into a write anywhere else.
 
 **Everything else prompts you in the pane.** Writing to a file anywhere else does, above all.
 That prompt is the only thing that catches an instruction smuggled into a diff that nobody

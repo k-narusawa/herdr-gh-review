@@ -21,6 +21,10 @@ pub struct Draft {
     pub pr_number: u32,
     pub head_sha: String,
     pub body: String,
+    /// The summary came from the AI review and has not been edited since. Never sent to GitHub —
+    /// it is what keeps the submit dialog from presenting the agent's prose as the reviewer's own
+    #[serde(default)]
+    pub body_ai: bool,
     pub comments: Vec<DraftComment>,
 }
 
@@ -31,6 +35,7 @@ impl Draft {
             pr_number,
             head_sha: head_sha.to_string(),
             body: String::new(),
+            body_ai: false,
             comments: Vec::new(),
         }
     }

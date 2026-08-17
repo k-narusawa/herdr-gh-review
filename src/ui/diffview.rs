@@ -35,9 +35,10 @@ fn render_header(pr: &PrDetail, frame: &mut Frame, area: Rect) {
 fn render_status(app: &App, frame: &mut Frame, area: Rect) {
     let text = app.status.clone().unwrap_or_else(|| {
         format!(
-            " j/k:move }}:next file s:{} c:comment S:submit q:back ?:help    comments: {} ",
+            " j/k:move }}:next file s:{} c:comment S:submit q:back ?:help    comments: {}{} ",
             if app.split { "unified" } else { "split" },
-            app.draft.comments.len()
+            app.draft.comments.len(),
+            if app.draft.body_ai { "   summary: AI" } else { "" }
         )
     });
     frame.render_widget(
@@ -242,8 +243,13 @@ fn comment_spans(part: &CommentPart, area_width: usize) -> Vec<Span<'_>> {
 
     match part {
         CommentPart::Top { ai } => {
-            let head = format!("╭─ {} ", if *ai { "AI" } else { "you" });
-            let rule = box_width.saturating_sub(Span::raw(head.as_str()).width() + 1);
+            // The label is cut back until it leaves room for the closing corner, or a narrow
+            // terminal gives a top border wider than the rest of the box
+            let mut head = format!("╭─ {} ", if *ai { "AI" } else { "you" });
+            while Span::raw(head.as_str()).width() + 1 > box_width {
+                head.pop();
+            }
+            let rule = box_width - Span::raw(head.as_str()).width() - 1;
             spans.push(Span::styled(format!("{head}{}╮", "─".repeat(rule)), style));
         }
         CommentPart::Bottom => {
@@ -387,6 +393,26 @@ mod tests {
         }
     }
 
+    /// The label is the only part of the frame with a fixed size, so it is where narrow
+    /// terminals used to push the top border past the rows below it
+    #[test]
+    fn a_comment_box_stays_even_at_every_narrow_width() {
+        let parts = [
+            CommentPart::Top { ai: false },
+            CommentPart::Top { ai: true },
+            CommentPart::Body("text".into()),
+            CommentPart::Bottom,
+        ];
+        for width in 0usize..40 {
+            let widths: Vec<usize> =
+                parts.iter().map(|p| comment_line(p, width).width()).collect();
+            assert!(
+                widths.iter().all(|w| *w == widths[0]),
+                "width={width} gave uneven rows: {widths:?}"
+            );
+        }
+    }
+
     #[test]
     fn a_comment_box_is_labelled_with_who_wrote_it() {
         assert!(comment_line(&CommentPart::Top { ai: true }, 60).to_string().contains("─ AI ─"));
@@ -510,5 +536,3 @@ diff --git a/ai.go b/ai.go
         );
     }
 }
-
-

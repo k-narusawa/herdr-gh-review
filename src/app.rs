@@ -56,6 +56,8 @@ pub struct App {
     /// The cell the cursor prefers in split view
     pub cursor_side: Side,
     pub status: Option<String>,
+    /// An AI pane is working on this PR. Gates both the poll for its result and a second `A`
+    pub ai_pending: bool,
     /// Columns available inside a comment box. The renderer owns this and rebuilds rows when
     /// it changes, because wrapping decides how many rows a comment takes
     pub comment_width: usize,
@@ -76,6 +78,7 @@ impl App {
             split: false,
             cursor_side: Side::Right,
             status: None,
+            ai_pending: false,
             comment_width: 60,
         };
         app.set_diff(raw_diff);
@@ -94,6 +97,7 @@ impl App {
     }
 
     pub fn rebuild_rows(&mut self) {
+        let anchor = self.cursor_anchor();
         let mut rows = Vec::new();
         for (file_idx, file) in self.diff.files.iter().enumerate() {
             rows.push(Row::FileHeader { file_idx });
@@ -120,6 +124,30 @@ impl App {
             }
         }
         self.rows = rows;
+        self.restore_cursor(anchor);
+    }
+
+    /// The row the cursor is on, and how far below it the cursor sits. Row numbers move whenever
+    /// a comment re-wraps — a resize or `T` is enough — so the cursor is put back by what it was
+    /// reading rather than by number. A wrapped body line is not stable text, so a comment
+    /// anchors on its top border instead
+    fn cursor_anchor(&self) -> Option<(Row, usize)> {
+        let mut idx = self.cursor.min(self.rows.len().checked_sub(1)?);
+        while matches!(
+            self.rows.get(idx),
+            Some(Row::Comment { part: CommentPart::Body(_), .. })
+        ) {
+            idx = idx.checked_sub(1)?;
+        }
+        Some((self.rows[idx].clone(), self.cursor - idx))
+    }
+
+    fn restore_cursor(&mut self, anchor: Option<(Row, usize)>) {
+        if let Some((row, offset)) = anchor
+            && let Some(pos) = self.rows.iter().position(|r| *r == row)
+        {
+            self.cursor = pos + offset;
+        }
         if self.cursor >= self.rows.len() {
             self.cursor = self.rows.len().saturating_sub(1);
         }
@@ -293,6 +321,9 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut out = Vec::new();
 
     for paragraph in text.lines() {
+        // A tab has no width of its own here but several on screen, which would push the box's
+        // right border out of line. Same four columns the diff lines are expanded to
+        let paragraph = paragraph.replace('\t', "    ");
         let chars: Vec<char> = paragraph.chars().collect();
         if chars.is_empty() {
             out.push(String::new());
@@ -304,6 +335,7 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
             let mut used = 0;
             let mut end = start;
             let mut last_space = None;
+            let mut seen_text = false;
             while end < chars.len() {
                 let w = chars[end].width().unwrap_or(0);
                 if used + w > width {
@@ -311,8 +343,14 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
                 }
                 used += w;
                 end += 1;
+                // Breaking at a space that has no text before it would emit an empty line and
+                // eat the indent — markdown lists and code blocks in AI comments start that way
                 if chars[end - 1] == ' ' {
-                    last_space = Some(end);
+                    if seen_text {
+                        last_space = Some(end);
+                    }
+                } else {
+                    seen_text = true;
                 }
             }
 
@@ -512,6 +550,38 @@ diff --git a/b.rs b/b.rs
     #[test]
     fn wrap_of_an_empty_body_is_one_empty_line() {
         assert_eq!(wrap("", 20), vec![""]);
+    }
+
+    #[test]
+    fn wrap_keeps_the_indent_of_a_list_item_instead_of_emitting_a_blank_line() {
+        assert_eq!(wrap("    alpha beta gamma", 12), vec!["    alpha", "beta gamma"]);
+    }
+
+    #[test]
+    fn wrap_expands_tabs_so_they_take_the_width_they_draw() {
+        assert_eq!(wrap("\tab", 20), vec!["    ab"]);
+    }
+
+    /// A resize re-wraps every comment, which used to slide the cursor off the line it was on
+    #[test]
+    fn re_wrapping_a_comment_above_the_cursor_leaves_the_cursor_on_its_line() {
+        let mut a = app();
+        a.comment_width = 60;
+        a.draft.upsert_comment(
+            CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
+            "a comment long enough that the width decides how many rows it takes".into(),
+            false,
+        );
+        a.rebuild_rows();
+        // the last row is in the second file, below the comment box
+        a.cursor = a.rows.len() - 1;
+        let (row, before) = (a.rows[a.cursor].clone(), a.rows.len());
+
+        a.comment_width = 12;
+        a.rebuild_rows();
+
+        assert!(a.rows.len() > before, "the box did not grow, nothing was tested");
+        assert_eq!(a.rows[a.cursor], row);
     }
 
     #[test]
