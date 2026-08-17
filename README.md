@@ -23,9 +23,7 @@ lists of the pull requests in this repository that are waiting on you, and the o
 ## Install
 
 ```bash
-git clone https://github.com/k-narusawa/herdr-gh-review
-herdr plugin link ./herdr-gh-review
-bash ./herdr-gh-review/herdr/install.sh
+herdr plugin install k-narusawa/herdr-gh-review
 ```
 
 ## Usage
@@ -144,6 +142,15 @@ Those comments are not sent — the rest of the review goes through as usual. Th
 draft so you can rewrite them, and `D` discards them once you no longer need them.
 
 ## Development
+
+```bash
+git clone https://github.com/k-narusawa/herdr-gh-review
+herdr plugin link ./herdr-gh-review
+bash ./herdr-gh-review/herdr/install.sh
+```
+
+`herdr plugin link` only registers the plugin — unlike `herdr plugin install`, it does not run
+`[[build]]` — so the binary needs building by hand with `herdr/install.sh`.
 
 Link once. You do not need to `unlink` and `link` again.
 
