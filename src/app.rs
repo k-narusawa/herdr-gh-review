@@ -1,6 +1,7 @@
 use crate::diff::{CommentTarget, DiffLine, FileDiff, LineKind, ParsedDiff, Side};
 use crate::review::{Draft, DraftComment};
 use std::collections::HashSet;
+use unicode_width::UnicodeWidthChar;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
@@ -27,8 +28,16 @@ pub enum Row {
         path: String,
         line: u32,
         side: Side,
-        body_line: String,
+        part: CommentPart,
     },
+}
+
+/// A comment is drawn as a box, one row per border and one per wrapped line of body
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommentPart {
+    Top { ai: bool },
+    Body(String),
+    Bottom,
 }
 
 pub struct App {
@@ -47,6 +56,9 @@ pub struct App {
     /// The cell the cursor prefers in split view
     pub cursor_side: Side,
     pub status: Option<String>,
+    /// Columns available inside a comment box. The renderer owns this and rebuilds rows when
+    /// it changes, because wrapping decides how many rows a comment takes
+    pub comment_width: usize,
 }
 
 impl App {
@@ -64,6 +76,7 @@ impl App {
             split: false,
             cursor_side: Side::Right,
             status: None,
+            comment_width: 60,
         };
         app.set_diff(raw_diff);
         app
@@ -119,19 +132,19 @@ impl App {
         let Some(comment) = self.draft.comment_at(&target) else {
             return;
         };
-        for (i, body_line) in comment.body.lines().enumerate() {
-            let body_line = if comment.ai && i == 0 {
-                format!("[AI] {body_line}")
-            } else {
-                body_line.to_string()
-            };
+        let mut push = |part| {
             rows.push(Row::Comment {
                 path: target.path.clone(),
                 line: target.line,
                 side: target.side,
-                body_line,
-            });
+                part,
+            })
+        };
+        push(CommentPart::Top { ai: comment.ai });
+        for body_line in wrap(&comment.body, self.comment_width) {
+            push(CommentPart::Body(body_line));
         }
+        push(CommentPart::Bottom);
     }
 
     pub fn toggle_split(&mut self) {
@@ -272,6 +285,55 @@ impl App {
     }
 }
 
+/// Break text into lines of at most `width` display columns. Breaks at the last space so a word
+/// is not cut in half, and falls back to a hard break where there is none — which is the normal
+/// case for Japanese, and the only way to place a word longer than the box
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut out = Vec::new();
+
+    for paragraph in text.lines() {
+        let chars: Vec<char> = paragraph.chars().collect();
+        if chars.is_empty() {
+            out.push(String::new());
+            continue;
+        }
+
+        let mut start = 0;
+        while start < chars.len() {
+            let mut used = 0;
+            let mut end = start;
+            let mut last_space = None;
+            while end < chars.len() {
+                let w = chars[end].width().unwrap_or(0);
+                if used + w > width {
+                    break;
+                }
+                used += w;
+                end += 1;
+                if chars[end - 1] == ' ' {
+                    last_space = Some(end);
+                }
+            }
+
+            if end == chars.len() {
+                out.push(chars[start..].iter().collect());
+                break;
+            }
+            // end == start means one character is wider than the whole box; take it anyway
+            let cut = last_space.unwrap_or(end).max(start + 1);
+            let line: String = chars[start..cut].iter().collect();
+            out.push(line.trim_end().to_string());
+            start = cut;
+        }
+    }
+
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
 fn is_on_diff(diff: &crate::diff::ParsedDiff, comment: &DraftComment) -> bool {
     target_in_diff(diff, &comment.path, comment.line, comment.side)
 }
@@ -372,19 +434,17 @@ diff --git a/b.rs b/b.rs
             false,
         );
         a.rebuild_rows();
-        // rows[2]="-one", rows[3]="+ONE" (a.rs:1 RIGHT), then the two comment lines
-        let Row::Comment { ref body_line, .. } = a.rows[4] else {
-            panic!("expected a comment row, got {:?}", a.rows[4]);
-        };
-        assert_eq!(body_line, "first line");
-        let Row::Comment { ref body_line, .. } = a.rows[5] else {
-            panic!("expected a comment row");
-        };
-        assert_eq!(body_line, "second line");
+        // rows[2]="-one", rows[3]="+ONE" (a.rs:1 RIGHT), then the comment box
+        assert_eq!(comment_parts(&a), vec![
+            CommentPart::Top { ai: false },
+            CommentPart::Body("first line".into()),
+            CommentPart::Body("second line".into()),
+            CommentPart::Bottom,
+        ]);
     }
 
     #[test]
-    fn ai_comment_is_marked_only_on_its_first_line() {
+    fn an_ai_comment_is_labelled_on_its_top_border() {
         let mut a = app();
         a.draft.upsert_comment(
             CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
@@ -392,14 +452,66 @@ diff --git a/b.rs b/b.rs
             true,
         );
         a.rebuild_rows();
-        let Row::Comment { ref body_line, .. } = a.rows[4] else {
-            panic!("expected a comment row, got {:?}", a.rows[4]);
-        };
-        assert_eq!(body_line, "[AI] first line");
-        let Row::Comment { ref body_line, .. } = a.rows[5] else {
-            panic!("expected a comment row");
-        };
-        assert_eq!(body_line, "second line");
+        assert_eq!(comment_parts(&a), vec![
+            CommentPart::Top { ai: true },
+            CommentPart::Body("first line".into()),
+            CommentPart::Body("second line".into()),
+            CommentPart::Bottom,
+        ]);
+    }
+
+    #[test]
+    fn a_long_line_wraps_to_the_comment_width() {
+        let mut a = app();
+        a.comment_width = 12;
+        a.draft.upsert_comment(
+            CommentTarget { path: "a.rs".into(), line: 1, side: Side::Right },
+            "the client cannot tell".into(),
+            false,
+        );
+        a.rebuild_rows();
+        assert_eq!(comment_parts(&a), vec![
+            CommentPart::Top { ai: false },
+            CommentPart::Body("the client".into()),
+            CommentPart::Body("cannot tell".into()),
+            CommentPart::Bottom,
+        ]);
+    }
+
+    fn comment_parts(a: &App) -> Vec<CommentPart> {
+        a.rows
+            .iter()
+            .filter_map(|r| match r {
+                Row::Comment { part, .. } => Some(part.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn wrap_breaks_japanese_without_spaces_by_display_width() {
+        // Each character is two columns wide, so six fit in a width of 12
+        assert_eq!(wrap("あいうえおかきくけこ", 12), vec!["あいうえおか", "きくけこ"]);
+    }
+
+    #[test]
+    fn wrap_keeps_a_word_whole_when_it_can() {
+        assert_eq!(wrap("alpha beta gamma", 11), vec!["alpha beta", "gamma"]);
+    }
+
+    #[test]
+    fn wrap_hard_breaks_a_word_longer_than_the_width() {
+        assert_eq!(wrap("abcdefghij", 4), vec!["abcd", "efgh", "ij"]);
+    }
+
+    #[test]
+    fn wrap_keeps_blank_lines_between_paragraphs() {
+        assert_eq!(wrap("one\n\ntwo", 20), vec!["one", "", "two"]);
+    }
+
+    #[test]
+    fn wrap_of_an_empty_body_is_one_empty_line() {
+        assert_eq!(wrap("", 20), vec![""]);
     }
 
     #[test]
@@ -467,7 +579,7 @@ diff --git a/b.rs b/b.rs
         let a = app_with_a_stale_comment();
         assert_eq!(a.stale_comments(), 1);
         // A comment on a vanished line never renders — being submitted unseen is the trap
-        assert_eq!(a.rows.iter().filter(|r| matches!(r, Row::Comment { .. })).count(), 1);
+        assert_eq!(comment_boxes(&a), 1);
     }
 
     /// This is what keeps the 422 away: only lines that are in the diff go out
@@ -571,10 +683,15 @@ diff --git a/a.rs b/a.rs
             false,
         );
         a.toggle_split();
-        assert_eq!(
-            a.rows.iter().filter(|r| matches!(r, Row::Comment { .. })).count(),
-            1
-        );
+        assert_eq!(comment_boxes(&a), 1);
+    }
+
+    /// One top border per comment, so this counts comments rather than rendered lines
+    fn comment_boxes(a: &App) -> usize {
+        a.rows
+            .iter()
+            .filter(|r| matches!(r, Row::Comment { part: CommentPart::Top { .. }, .. }))
+            .count()
     }
 
     #[test]

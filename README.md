@@ -45,6 +45,20 @@ A tree of the changed files sits to the left of the diff. The file under the cur
 highlighted and follows you as you move with `}` / `{`. `T` toggles the tree, and terminals
 narrower than 80 columns drop it automatically in favor of the diff.
 
+Comments sit under the line they are on, in a box labelled with who wrote it:
+
+```
+   41 +    if user.is_none() {
+      ╭─ AI ───────────────────────────────────────────────╮
+      │ Should this return 401 instead of 500? The client  │
+      │ cannot tell that a retry is useless.               │
+      ╰────────────────────────────────────────────────────╯
+   42 +        return Err(ServerError);
+```
+
+Long lines wrap to the box, breaking at spaces where there are any and by display width where
+there are not, so Japanese wraps too. Resizing the terminal re-wraps them.
+
 `s` switches the diff between unified (one column) and split (old on the left, new on the right).
 In split view, removed and added lines sit at the same height and a line that exists on only one
 side leaves the other blank. Comments attach to the line in the cell under the cursor, so use
@@ -79,7 +93,7 @@ Reviews in progress are saved automatically, and cleared only once a submit succ
 
 `A` splits off a pane, starts `claude` in it, and asks it to review the pull request with the
 built-in `/code-review` skill. Nothing is posted to GitHub — the findings come back as draft
-comments in this pane, marked `[AI]`, and you edit, delete, or submit them as your own.
+comments in this pane, in a box labelled `AI`, and you edit, delete, or submit them as your own.
 
 The pane stays open while you review, so you can keep talking to the agent about what it found.
 Leaving the diff view with `q` closes it again — including an agent still working, which loses
