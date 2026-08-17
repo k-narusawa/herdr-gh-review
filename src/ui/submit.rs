@@ -1,3 +1,4 @@
+use super::CURSOR;
 use crate::review::{Draft, ReviewEvent};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout};
@@ -36,11 +37,14 @@ pub fn render(draft: &Draft, stale: usize, cursor: usize, frame: &mut Frame) {
     lines.push(Line::from(""));
 
     for (i, event) in EVENTS.iter().enumerate() {
-        let text = format!("  {}  ", event.label());
+        let text = format!(" {}  ", event.label());
         lines.push(if i == cursor {
-            Line::from(Span::styled(text, Style::default().add_modifier(Modifier::REVERSED)))
+            Line::from(vec![
+                Span::raw(CURSOR),
+                Span::styled(text, Style::default().add_modifier(Modifier::BOLD)),
+            ])
         } else {
-            Line::from(text)
+            Line::from(format!(" {text}"))
         });
     }
     lines.push(Line::from(""));

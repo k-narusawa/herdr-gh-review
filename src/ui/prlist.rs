@@ -40,13 +40,16 @@ pub fn render(prs: &[PrSummary], cursor: usize, title: &str, status: Option<&str
                     _ => String::new(),
                 };
                 let draft = if pr.is_draft { " [draft]" } else { "" };
+                // The marker takes the row's leading blank, so the columns stay put
+                let lead = if i == cursor { super::CURSOR } else { " " };
                 let line = Line::from(vec![
-                    Span::styled(format!(" #{:<6}", pr.number), Style::default().fg(Color::Cyan)),
+                    Span::raw(lead),
+                    Span::styled(format!("#{:<6}", pr.number), Style::default().fg(Color::Cyan)),
                     Span::raw(pr.title.clone()),
                     Span::styled(format!("  @{}{counts}{draft}", pr.author), Style::default().fg(Color::DarkGray)),
                 ]);
                 if i == cursor {
-                    line.style(Style::default().add_modifier(Modifier::REVERSED))
+                    line.style(Style::default().add_modifier(Modifier::BOLD))
                 } else {
                     line
                 }
