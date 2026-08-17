@@ -1,4 +1,4 @@
-use crate::app::{App, Row};
+use crate::app::{App, CommentPart, Row};
 use crate::diff::{DiffLine, Hunk, LineKind, Side};
 use crate::gh::PrDetail;
 use ansi_to_tui::IntoText;
@@ -35,9 +35,10 @@ fn render_header(pr: &PrDetail, frame: &mut Frame, area: Rect) {
 fn render_status(app: &App, frame: &mut Frame, area: Rect) {
     let text = app.status.clone().unwrap_or_else(|| {
         format!(
-            " j/k:move }}:next file s:{} c:comment S:submit q:back ?:help    comments: {} ",
+            " j/k:move }}:next file s:{} c:comment S:submit q:back ?:help    comments: {}{} ",
             if app.split { "unified" } else { "split" },
-            app.draft.comments.len()
+            app.draft.comments.len(),
+            if app.draft.body_ai { "   summary: AI" } else { "" }
         )
     });
     frame.render_widget(
@@ -57,8 +58,22 @@ fn render_body(app: &mut App, frame: &mut Frame, area: Rect) {
     render_diff(app, frame, diff);
 }
 
+/// A comment box is inset this far, so it reads as attached to the line above rather than as
+/// part of the diff
+const COMMENT_INDENT: usize = 6;
+/// `│ ` on the left and ` │` on the right
+const COMMENT_FRAME: usize = 4;
+
 fn render_diff(app: &mut App, frame: &mut Frame, area: Rect) {
     let height = area.height as usize;
+
+    // Wrapping decides how many rows a comment occupies, so a resize has to rebuild them
+    let comment_width = comment_box_width(area.width as usize).saturating_sub(COMMENT_FRAME).max(1);
+    if app.comment_width != comment_width {
+        app.comment_width = comment_width;
+        app.rebuild_rows();
+    }
+
     app.scroll = clamp_scroll(app.scroll, app.cursor, height);
 
     let lines: Vec<Line> = app
@@ -124,10 +139,7 @@ fn row_to_line<'a>(app: &'a App, row: &'a Row, is_cursor: bool, width: usize) ->
             Line::from(line_spans(app, line, line.new_lineno.or(line.old_lineno)))
         }
         Row::Pair { .. } => unreachable!("returned above"),
-        Row::Comment { body_line, .. } => Line::from(Span::styled(
-            format!("      💬 {body_line}"),
-            Style::default().fg(Color::Yellow),
-        )),
+        Row::Comment { part, .. } => Line::from(comment_spans(part, width)),
     };
 
     if is_cursor {
@@ -218,6 +230,42 @@ fn cell_spans<'a>(
         Side::Right => line.new_lineno,
     };
     fit_spans(line_spans(app, line, number), width)
+}
+
+fn comment_box_width(area_width: usize) -> usize {
+    area_width.saturating_sub(COMMENT_INDENT).max(COMMENT_FRAME + 1)
+}
+
+fn comment_spans(part: &CommentPart, area_width: usize) -> Vec<Span<'_>> {
+    let style = Style::default().fg(Color::Yellow);
+    let box_width = comment_box_width(area_width);
+    let mut spans = vec![Span::raw(" ".repeat(COMMENT_INDENT))];
+
+    match part {
+        CommentPart::Top { ai } => {
+            // The label is cut back until it leaves room for the closing corner, or a narrow
+            // terminal gives a top border wider than the rest of the box
+            let mut head = format!("╭─ {} ", if *ai { "AI" } else { "you" });
+            while Span::raw(head.as_str()).width() + 1 > box_width {
+                head.pop();
+            }
+            let rule = box_width - Span::raw(head.as_str()).width() - 1;
+            spans.push(Span::styled(format!("{head}{}╮", "─".repeat(rule)), style));
+        }
+        CommentPart::Bottom => {
+            let rule = box_width - 2;
+            spans.push(Span::styled(format!("╰{}╯", "─".repeat(rule)), style));
+        }
+        CommentPart::Body(text) => {
+            spans.push(Span::styled("│ ", style));
+            spans.extend(fit_spans(
+                vec![Span::styled(text.as_str(), style)],
+                box_width - COMMENT_FRAME,
+            ));
+            spans.push(Span::styled(" │", style));
+        }
+    }
+    spans
 }
 
 /// Cut the spans down to exactly `width` columns, padding with spaces if they fall short
@@ -320,6 +368,77 @@ mod tests {
         assert_eq!(width_of(&fit_spans(vec![Span::raw("abc")], 0)), 0);
     }
 
+    fn comment_line(part: &CommentPart, width: usize) -> Line<'_> {
+        Line::from(comment_spans(part, width))
+    }
+
+    /// Every row of the box has to end in the same column, or the frame visibly wobbles
+    #[test]
+    fn every_row_of_a_comment_box_is_the_same_width() {
+        let parts = [
+            CommentPart::Top { ai: true },
+            CommentPart::Body("short".into()),
+            CommentPart::Body("日本語の行も同じ幅で閉じる".into()),
+            CommentPart::Body(String::new()),
+            CommentPart::Bottom,
+        ];
+        for width in [40usize, 41, 80, 120] {
+            let widths: Vec<usize> =
+                parts.iter().map(|p| comment_line(p, width).width()).collect();
+            assert!(
+                widths.iter().all(|w| *w == widths[0]),
+                "width={width} gave uneven rows: {widths:?}"
+            );
+            assert_eq!(widths[0], width, "the box should reach the right edge");
+        }
+    }
+
+    /// The label is the only part of the frame with a fixed size, so it is where narrow
+    /// terminals used to push the top border past the rows below it
+    #[test]
+    fn a_comment_box_stays_even_at_every_narrow_width() {
+        let parts = [
+            CommentPart::Top { ai: false },
+            CommentPart::Top { ai: true },
+            CommentPart::Body("text".into()),
+            CommentPart::Bottom,
+        ];
+        for width in 0usize..40 {
+            let widths: Vec<usize> =
+                parts.iter().map(|p| comment_line(p, width).width()).collect();
+            assert!(
+                widths.iter().all(|w| *w == widths[0]),
+                "width={width} gave uneven rows: {widths:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_comment_box_is_labelled_with_who_wrote_it() {
+        assert!(comment_line(&CommentPart::Top { ai: true }, 60).to_string().contains("─ AI ─"));
+        assert!(comment_line(&CommentPart::Top { ai: false }, 60).to_string().contains("─ you ─"));
+    }
+
+    #[test]
+    fn a_body_line_too_long_for_the_box_is_cut_not_overflowed() {
+        let part = CommentPart::Body("x".repeat(500));
+        assert_eq!(comment_line(&part, 40).width(), 40);
+    }
+
+    /// The narrowest terminals must not panic on the border arithmetic
+    #[test]
+    fn a_comment_box_survives_a_tiny_width() {
+        for width in 0usize..12 {
+            for part in [
+                CommentPart::Top { ai: false },
+                CommentPart::Body("text".into()),
+                CommentPart::Bottom,
+            ] {
+                comment_line(&part, width);
+            }
+        }
+    }
+
     const UNEVEN: &str = "\
 diff --git a/a.rs b/a.rs
 --- a/a.rs
@@ -417,4 +536,3 @@ diff --git a/ai.go b/ai.go
         );
     }
 }
-

@@ -15,6 +15,14 @@ pub enum Side {
 }
 
 impl Side {
+    /// The spelling GitHub uses, and the one `#[serde(rename_all)]` above produces
+    pub fn as_api_str(self) -> &'static str {
+        match self {
+            Side::Right => "RIGHT",
+            Side::Left => "LEFT",
+        }
+    }
+
     pub fn flip(self) -> Self {
         match self {
             Side::Right => Side::Left,
@@ -260,6 +268,7 @@ fn parse_hunk_header(line: &str) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     const SIMPLE: &str = "\
 diff --git a/src/auth.rs b/src/auth.rs
@@ -518,5 +527,13 @@ diff --git a/a.txt b/a.txt
         let src: Vec<&str> = MULTI.lines().collect();
         let deleted = &d.files[1].hunks[0].lines[0]; // "-fn removed() {}" in the second file
         assert_eq!(src[deleted.raw_idx], "-fn removed() {}");
+    }
+
+    /// The label in the log and the value sent to GitHub have to be the same word
+    #[test]
+    fn side_as_api_str_matches_what_serde_writes() {
+        for side in [Side::Right, Side::Left] {
+            assert_eq!(serde_json::to_value(side).unwrap(), json!(side.as_api_str()));
+        }
     }
 }

@@ -1,3 +1,4 @@
+mod ai;
 mod app;
 mod delta;
 mod diff;
@@ -7,10 +8,12 @@ mod review;
 mod target;
 mod ui;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use app::App;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use gh::{Gh, PrDetail, PrSummary};
+use std::path::Path;
+use std::time::Duration;
 use target::Target;
 
 fn main() -> Result<()> {
@@ -57,11 +60,6 @@ impl ListKind {
             ListKind::Authored => gh.search_authored(),
         }
     }
-
-    /// Only the repository list depends on the current directory's remote
-    fn needs_repo(self) -> bool {
-        self == ListKind::Repo
-    }
 }
 
 fn run_pr_list(
@@ -79,7 +77,7 @@ fn run_pr_list(
         Ok(v) => prs = v,
         Err(e) => {
             gh::log_error(&e);
-            status = Some(fetch_error_message(&e, kind));
+            status = Some(first_line(&e.to_string()));
         }
     }
 
@@ -107,13 +105,13 @@ fn run_pr_list(
                     }
                     Err(e) => {
                         gh::log_error(&e);
-                        status = Some(fetch_error_message(&e, kind));
+                        status = Some(first_line(&e.to_string()));
                     }
                 }
             }
             KeyCode::Enter => {
                 if let Some(pr) = prs.get(cursor)
-                    && let Err(e) = open_pr(terminal, gh, pr.repo.as_deref(), pr.number)
+                    && let Err(e) = open_pr(terminal, gh, None, pr.number)
                 {
                     gh::log_error(&e);
                     status = Some(first_line(&e.to_string()));
@@ -122,15 +120,6 @@ fn run_pr_list(
             _ => {}
         }
     }
-}
-
-/// By far the most common cause is a cwd that is not a GitHub repository, so point at the way out
-fn fetch_error_message(error: &anyhow::Error, kind: ListKind) -> String {
-    let message = first_line(&error.to_string());
-    if !kind.needs_repo() {
-        return message;
-    }
-    format!("{message} (--review-requested / --authored work from anywhere)")
 }
 
 fn open_pr(
@@ -151,7 +140,32 @@ fn open_pr(
             Some(" the saved draft predates the current commit — check the line positions ".into());
     }
     sync_head(&mut app, &pr);
-    run_diff_view(terminal, gh, &mut app, &mut pr)
+    // A review the agent finished just as the last visit ended is still on disk. Turning the
+    // poll on picks it up on the first tick, and turns itself off again
+    app.ai_pending = ai::review_path(&state, &pr.repo, pr.number).exists();
+    let result = run_diff_view(terminal, gh, &mut app, &mut pr);
+    close_ai_panes(&state, &pr.repo, pr.number);
+    result
+}
+
+/// Leaving the diff view takes the AI panes with it — an agent still working is cut off, and
+/// its findings with it, but `A` starts a fresh one. Nothing here is worth failing the exit over
+fn close_ai_panes(state: &Path, repo: &str, pr_number: u32) {
+    let panes = ai::panes_path(state, repo, pr_number);
+    if !panes.exists() {
+        return;
+    }
+    let Ok(root) = std::env::var("HERDR_PLUGIN_ROOT") else {
+        return;
+    };
+    if let Err(e) = std::process::Command::new("bash")
+        .arg(format!("{root}/herdr/ai.sh"))
+        .arg("--close")
+        .arg(&panes)
+        .output()
+    {
+        gh::log_error(&anyhow::Error::from(e));
+    }
 }
 
 /// commit_id always points at the PR's current head; GitHub rejects a submit on a stale SHA
@@ -174,6 +188,13 @@ fn run_diff_view(
     loop {
         terminal.draw(|f| ui::diffview::render(app, pr, f))?;
 
+        // The AI writes its review in another pane, so look for it between key presses. Without
+        // one running there is nothing to look for, and the read blocks as it did before
+        if app.ai_pending && !event::poll(Duration::from_millis(500))? {
+            merge_ai_review(app);
+            continue;
+        }
+
         let Event::Key(key) = event::read()? else {
             continue;
         };
@@ -185,6 +206,48 @@ fn run_diff_view(
             KeyOutcome::Continue => {}
         }
     }
+}
+
+fn merge_ai_review(app: &mut App) {
+    let state = review::state_dir();
+    let review = match ai::take(&state, &app.draft.repo, app.draft.pr_number) {
+        Ok(Some(review)) => review,
+        Ok(None) => return,
+        Err(e) => {
+            gh::log_error(&e);
+            app.status = Some(format!(" {} ", first_line(&e.to_string())));
+            app.ai_pending = false;
+            return;
+        }
+    };
+    app.ai_pending = false;
+
+    let took_summary = app.draft.body.trim().is_empty() && !review.body.trim().is_empty();
+    let merged = ai::merge(app, review);
+    if let Err(e) = review::save(&state, &app.draft) {
+        gh::log_error(&e);
+    }
+    if !merged.skipped_targets.is_empty() {
+        gh::log_error(&anyhow!(
+            "AI review: {} comment(s) skipped: {}",
+            merged.skipped_targets.len(),
+            merged.skipped_targets.join(", ")
+        ));
+    }
+    app.rebuild_rows();
+
+    let mut status = format!(" merged {} AI comments", merged.added);
+    if took_summary {
+        status.push_str(" and took its summary (e to read it)");
+    }
+    if !merged.skipped_targets.is_empty() {
+        status.push_str(&format!(
+            " ({} skipped: not in the diff, or already commented)",
+            merged.skipped_targets.len()
+        ));
+    }
+    status.push(' ');
+    app.status = Some(status);
 }
 
 fn handle_key(
@@ -217,6 +280,7 @@ fn handle_key(
         (KeyCode::Char('D'), _) => discard_stale_comments(app)?,
         (KeyCode::Char('e'), _) => edit_review_body(terminal, app)?,
         (KeyCode::Char('S'), _) => submit(terminal, app, gh)?,
+        (KeyCode::Char('A'), _) => start_ai_review(app, gh),
         (KeyCode::Char('o'), _) => {
             if let Err(e) = gh.open_in_browser(&app.draft.repo, app.draft.pr_number) {
                 gh::log_error(&e);
@@ -301,6 +365,7 @@ fn submit(terminal: &mut ratatui::DefaultTerminal, app: &mut App, gh: &Gh) -> Re
                     Ok(()) => {
                         // Drop only what was sent; the rest stays so it can be rewritten
                         app.draft.body.clear();
+                        app.draft.body_ai = false;
                         let kept = app.retain_stale_comments();
                         app.rebuild_rows();
 
@@ -372,7 +437,7 @@ fn comment_on_cursor(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> 
         return Ok(());
     };
 
-    app.draft.upsert_comment(target, body);
+    app.draft.upsert_comment(target, body, false);
     review::save(&review::state_dir(), &app.draft)?;
     app.rebuild_rows();
     Ok(())
@@ -407,6 +472,7 @@ fn edit_review_body(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
     }
 
     app.draft.body = body;
+    app.draft.body_ai = false;
     review::save(&review::state_dir(), &app.draft)?;
     app.status = Some(if app.draft.body.is_empty() {
         " cleared the review summary ".into()
@@ -414,4 +480,77 @@ fn edit_review_body(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> R
         " updated the review summary ".into()
     });
     Ok(())
+}
+
+/// Open a pane for the AI and hand it the review. The result lands in a file
+/// that the event loop picks up; nothing here waits for it
+fn start_ai_review(app: &mut App, gh: &Gh) {
+    // Two agents on one handoff path race: whichever renames last wins, and the other review is
+    // lost without a word.
+    // ponytail: cleared only by a review landing, so an agent that dies takes `A` with it until
+    // you leave the diff view. Reaping the child would be the upgrade if that ever bites
+    if app.ai_pending {
+        app.status = Some(" an AI review is already running — it lands here when it finishes ".into());
+        return;
+    }
+
+    let Ok(root) = std::env::var("HERDR_PLUGIN_ROOT") else {
+        app.status = Some(" AI review needs to run inside a herdr pane ".into());
+        return;
+    };
+
+    match gh.current_repo() {
+        Ok(repo) if repo.eq_ignore_ascii_case(&app.draft.repo) => {}
+        Ok(_) => {
+            app.status = Some(" AI review works only on the current repository's PRs ".into());
+            return;
+        }
+        Err(e) => {
+            gh::log_error(&e);
+            app.status = Some(format!(" {} ", first_line(&e.to_string())));
+            return;
+        }
+    }
+
+    let state = review::state_dir();
+    let out = ai::review_path(&state, &app.draft.repo, app.draft.pr_number);
+
+    // A failure below the spawn (missing ai.sh, missing herdr, a failed pane split, ...) would
+    // otherwise vanish silently, so route it to the same log gh::log_error writes to
+    let stderr = std::fs::create_dir_all(&state)
+        .and_then(|()| {
+            std::fs::OpenOptions::new().create(true).append(true).open(state.join("log"))
+        })
+        .map(std::process::Stdio::from)
+        .unwrap_or_else(|_| std::process::Stdio::null());
+
+    let spawned = std::process::Command::new("bash")
+        .arg(format!("{root}/herdr/ai.sh"))
+        .arg(&app.draft.repo)
+        .arg(app.draft.pr_number.to_string())
+        .arg(&out)
+        .stdout(std::process::Stdio::null())
+        .stderr(stderr)
+        .spawn();
+
+    app.status = Some(match spawned {
+        Ok(mut child) => {
+            app.ai_pending = true;
+            // Dropping a Child does not reap it, so every press would leave a defunct bash behind.
+            // Waiting also catches an ai.sh that failed after the pane was already opened
+            std::thread::spawn(move || match child.wait() {
+                Ok(status) if !status.success() => {
+                    gh::log_error(&anyhow!("ai.sh exited with {status}"))
+                }
+                Err(e) => gh::log_error(&anyhow::Error::from(e)),
+                _ => {}
+            });
+            " asked the AI to review this PR ".into()
+        }
+        Err(e) => {
+            let e = anyhow::Error::from(e);
+            gh::log_error(&e);
+            format!(" {} ", first_line(&e.to_string()))
+        }
+    });
 }

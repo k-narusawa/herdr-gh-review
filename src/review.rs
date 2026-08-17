@@ -10,6 +10,9 @@ pub struct DraftComment {
     pub line: u32,
     pub side: Side,
     pub body: String,
+    /// Written by the AI review, not by hand. Shown in the diff, never sent to GitHub
+    #[serde(default)]
+    pub ai: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,6 +21,10 @@ pub struct Draft {
     pub pr_number: u32,
     pub head_sha: String,
     pub body: String,
+    /// The summary came from the AI review and has not been edited since. Never sent to GitHub —
+    /// it is what keeps the submit dialog from presenting the agent's prose as the reviewer's own
+    #[serde(default)]
+    pub body_ai: bool,
     pub comments: Vec<DraftComment>,
 }
 
@@ -28,6 +35,7 @@ impl Draft {
             pr_number,
             head_sha: head_sha.to_string(),
             body: String::new(),
+            body_ai: false,
             comments: Vec::new(),
         }
     }
@@ -46,14 +54,18 @@ impl Draft {
         self.position_of(target).map(|i| &self.comments[i])
     }
 
-    pub fn upsert_comment(&mut self, target: CommentTarget, body: String) {
+    pub fn upsert_comment(&mut self, target: CommentTarget, body: String, ai: bool) {
         match self.position_of(&target) {
-            Some(i) => self.comments[i].body = body,
+            Some(i) => {
+                self.comments[i].body = body;
+                self.comments[i].ai = ai;
+            }
             None => self.comments.push(DraftComment {
                 path: target.path,
                 line: target.line,
                 side: target.side,
                 body,
+                ai,
             }),
         }
     }
@@ -119,11 +131,17 @@ pub fn build_review_request(
         return Err(ReviewError::BodyRequired);
     }
 
+    let comments: Vec<_> = draft
+        .comments
+        .iter()
+        .map(|c| json!({ "path": c.path, "line": c.line, "side": c.side, "body": c.body }))
+        .collect();
+
     Ok(json!({
         "commit_id": draft.head_sha,
         "event": event.as_api_str(),
         "body": draft.body,
-        "comments": draft.comments,
+        "comments": comments,
     }))
 }
 
@@ -191,10 +209,12 @@ mod tests {
         d.upsert_comment(
             CommentTarget { path: "src/auth.rs".into(), line: 11, side: Side::Right },
             "should this return 401 when null?".into(),
+            false,
         );
         d.upsert_comment(
             CommentTarget { path: "src/auth.rs".into(), line: 11, side: Side::Left },
             "is this branch safe to drop?".into(),
+            false,
         );
         d
     }
@@ -250,6 +270,7 @@ mod tests {
         d.upsert_comment(
             CommentTarget { path: "src/auth.rs".into(), line: 11, side: Side::Right },
             "rewritten".into(),
+            false,
         );
         assert_eq!(d.comments.len(), 2);
         let t = CommentTarget { path: "src/auth.rs".into(), line: 11, side: Side::Right };
@@ -337,5 +358,53 @@ mod tests {
         assert!(rescued.exists(), "the corrupt draft was not moved aside");
         assert_eq!(std::fs::read_to_string(&rescued).unwrap(), "{ broken but precious");
         assert!(!path.exists(), "the corrupt file is still in its original place");
+    }
+
+    #[test]
+    fn ai_flag_is_kept_out_of_the_review_request() {
+        let mut d = Draft::new("k-narusawa/app", 42, "abc123");
+        d.upsert_comment(
+            CommentTarget { path: "src/auth.rs".into(), line: 11, side: Side::Right },
+            "generated".into(),
+            true,
+        );
+        let req = build_review_request(&d, ReviewEvent::Comment).unwrap();
+        assert_eq!(
+            req["comments"],
+            json!([
+                { "path": "src/auth.rs", "line": 11, "side": "RIGHT", "body": "generated" }
+            ])
+        );
+    }
+
+    #[test]
+    fn ai_flag_survives_a_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut d = Draft::new("k-narusawa/app", 42, "abc123");
+        d.upsert_comment(
+            CommentTarget { path: "src/auth.rs".into(), line: 11, side: Side::Right },
+            "generated".into(),
+            true,
+        );
+        save(dir.path(), &d).unwrap();
+        let loaded = load(dir.path(), "k-narusawa/app", 42).unwrap().unwrap();
+        assert!(loaded.comments[0].ai);
+    }
+
+    #[test]
+    fn a_draft_saved_before_the_ai_flag_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = draft_path(dir.path(), "k-narusawa/app", 42);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"repo":"k-narusawa/app","pr_number":42,"head_sha":"abc123","body":"",
+                "comments":[{"path":"src/auth.rs","line":11,"side":"RIGHT","body":"old"}]}"#,
+        )
+        .unwrap();
+
+        let loaded = load(dir.path(), "k-narusawa/app", 42).unwrap().unwrap();
+        assert_eq!(loaded.comments[0].body, "old");
+        assert!(!loaded.comments[0].ai);
     }
 }
