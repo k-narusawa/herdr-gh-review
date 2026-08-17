@@ -1,7 +1,7 @@
 use crate::app::App;
 use crate::diff::ParsedDiff;
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
@@ -48,7 +48,8 @@ fn build(diff: &ParsedDiff) -> Vec<Node<'_>> {
 
 pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
     let block = Block::default().borders(Borders::RIGHT);
-    let inner = block.inner(area);
+    let [gutter, inner] =
+        Layout::horizontal([Constraint::Length(1), Constraint::Min(1)]).areas(block.inner(area));
     frame.render_widget(block, area);
 
     let nodes = build(&app.diff);
@@ -74,6 +75,13 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) {
         .collect();
 
     frame.render_widget(Paragraph::new(lines), inner);
+    if let Some(row) = selected.and_then(|sel| sel.checked_sub(scroll))
+        && row < height
+    {
+        let mut marks = vec![Line::from(""); row];
+        marks.push(Line::from(super::CURSOR));
+        frame.render_widget(Paragraph::new(marks), gutter);
+    }
     app.tree_scroll = scroll;
 }
 
@@ -96,7 +104,7 @@ fn node_to_line<'a>(app: &'a App, node: &Node<'a>, width: usize, is_selected: bo
     };
 
     if is_selected {
-        line.style(Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD))
+        line.style(Style::default().add_modifier(Modifier::BOLD))
     } else {
         line
     }

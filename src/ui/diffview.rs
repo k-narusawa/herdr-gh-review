@@ -65,6 +65,8 @@ const COMMENT_INDENT: usize = 6;
 const COMMENT_FRAME: usize = 4;
 
 fn render_diff(app: &mut App, frame: &mut Frame, area: Rect) {
+    let [gutter, area] =
+        Layout::horizontal([Constraint::Length(1), Constraint::Min(1)]).areas(area);
     let height = area.height as usize;
 
     // Wrapping decides how many rows a comment occupies, so a resize has to rebuild them
@@ -85,6 +87,22 @@ fn render_diff(app: &mut App, frame: &mut Frame, area: Rect) {
         .map(|(i, row)| row_to_line(app, row, i == app.cursor, area.width as usize))
         .collect();
 
+    frame.render_widget(Paragraph::new(lines), area);
+    render_gutter(app, frame, gutter);
+}
+
+/// A column of its own, so every row kind carries the cursor marker without a file header or a
+/// hunk header having to give up its first character for it. Drawn after the diff, which is what
+/// settles `app.scroll`
+fn render_gutter(app: &App, frame: &mut Frame, area: Rect) {
+    let Some(row) = app.cursor.checked_sub(app.scroll) else {
+        return;
+    };
+    if row >= area.height as usize {
+        return;
+    }
+    let mut lines = vec![Line::from(""); row];
+    lines.push(Line::from(super::CURSOR));
     frame.render_widget(Paragraph::new(lines), area);
 }
 
@@ -136,27 +154,35 @@ fn row_to_line<'a>(app: &'a App, row: &'a Row, is_cursor: bool, width: usize) ->
         )),
         Row::Line { file_idx, hunk_idx, line_idx } => {
             let line = &app.diff.files[*file_idx].hunks[*hunk_idx].lines[*line_idx];
-            Line::from(line_spans(app, line, line.new_lineno.or(line.old_lineno)))
+            Line::from(line_spans(app, line, line.new_lineno.or(line.old_lineno), " "))
         }
         Row::Pair { .. } => unreachable!("returned above"),
         Row::Comment { part, .. } => Line::from(comment_spans(part, width)),
     };
 
     if is_cursor {
-        base.style(Style::default().add_modifier(Modifier::REVERSED))
+        base.style(Style::default().add_modifier(Modifier::BOLD))
     } else {
         base
     }
 }
 
-fn line_spans<'a>(app: &'a App, line: &'a DiffLine, number: Option<u32>) -> Vec<Span<'a>> {
+/// `marker` takes the column between the line number and the diff's own +/-, so split view can
+/// point at the active cell without shifting anything. Unified view leaves it blank and lets the
+/// gutter do the pointing
+fn line_spans<'a>(
+    app: &'a App,
+    line: &'a DiffLine,
+    number: Option<u32>,
+    marker: &'a str,
+) -> Vec<Span<'a>> {
     let number = number
         .map(|n| format!("{n:>5}"))
         .unwrap_or_else(|| "     ".to_string());
-    let mut spans = vec![Span::styled(
-        format!("{number} "),
-        Style::default().fg(Color::DarkGray),
-    )];
+    let mut spans = vec![
+        Span::styled(number, Style::default().fg(Color::DarkGray)),
+        Span::raw(marker),
+    ];
     match app.colored_line(line.raw_idx).and_then(ansi_spans) {
         Some(colored) => spans.extend(colored),
         None => {
@@ -193,18 +219,25 @@ fn pair_to_line<'a>(
     width: usize,
 ) -> Line<'a> {
     let cell = width.saturating_sub(1) / 2;
+    let active = is_cursor.then(|| match app.active_side(left, right) {
+        Side::Left => 0usize,
+        Side::Right => 1usize,
+    });
     let mut cells = [
-        cell_spans(app, hunk, left, Side::Left, cell),
-        cell_spans(app, hunk, right, Side::Right, width.saturating_sub(cell + 1)),
+        cell_spans(app, hunk, left, Side::Left, cell, active == Some(0)),
+        cell_spans(
+            app,
+            hunk,
+            right,
+            Side::Right,
+            width.saturating_sub(cell + 1),
+            active == Some(1),
+        ),
     ];
 
-    if is_cursor {
-        let active = match app.active_side(left, right) {
-            Side::Left => 0,
-            Side::Right => 1,
-        };
+    if let Some(active) = active {
         for span in &mut cells[active] {
-            span.style = span.style.add_modifier(Modifier::REVERSED);
+            span.style = span.style.add_modifier(Modifier::BOLD);
         }
     }
 
@@ -221,6 +254,7 @@ fn cell_spans<'a>(
     line_idx: Option<usize>,
     side: Side,
     width: usize,
+    is_active: bool,
 ) -> Vec<Span<'a>> {
     let Some(line) = line_idx.and_then(|i| hunk.lines.get(i)) else {
         return vec![Span::raw(" ".repeat(width))];
@@ -229,7 +263,8 @@ fn cell_spans<'a>(
         Side::Left => line.old_lineno,
         Side::Right => line.new_lineno,
     };
-    fit_spans(line_spans(app, line, number), width)
+    let marker = if is_active { super::CURSOR } else { " " };
+    fit_spans(line_spans(app, line, number, marker), width)
 }
 
 fn comment_box_width(area_width: usize) -> usize {
@@ -307,6 +342,43 @@ mod tests {
     use super::*;
     use crate::app::Row;
     use ratatui::text::Span;
+
+    const ONE_ADDED_LINE: &str = "\
+diff --git a/a.rs b/a.rs
+--- a/a.rs
++++ b/a.rs
+@@ -1,1 +1,1 @@
++added
+";
+
+    /// The cursor used to reverse its whole row, which painted an added line solid green and threw
+    /// away the +/- color that says what kind of line it is
+    #[test]
+    fn cursor_row_is_marked_in_the_gutter_and_keeps_its_added_green() {
+        let mut app = App::new(ONE_ADDED_LINE, crate::review::Draft::new("o/r", 1, "sha"));
+        // delta, when it is on PATH, would otherwise be the one choosing these colors
+        app.colored = None;
+        app.show_tree = false;
+        app.cursor = app
+            .rows
+            .iter()
+            .position(|r| matches!(r, Row::Line { .. }))
+            .expect("the diff has one line row");
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 4)).unwrap();
+        terminal
+            .draw(|frame| render_diff(&mut app, frame, frame.area()))
+            .unwrap();
+        let buf = terminal.backend().buffer();
+
+        let row = app.cursor as u16;
+        assert_eq!(buf[(0, row)].symbol(), super::super::CURSOR);
+        assert_eq!(buf[(7, row)].symbol(), "+");
+        assert_eq!(buf[(7, row)].fg, Color::Green);
+        assert_eq!(buf[(7, row)].bg, Color::Reset);
+        assert!(!buf[(7, row)].modifier.contains(Modifier::REVERSED));
+    }
 
     #[test]
     fn keeps_scroll_when_cursor_is_visible() {
